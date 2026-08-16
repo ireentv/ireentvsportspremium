@@ -1,0 +1,767 @@
+import React, { useEffect, useRef, useState } from "react";
+import Hls from "hls.js";
+import { 
+  Play, Pause, Volume2, VolumeX, Maximize, RotateCw, 
+  Settings, Activity, AlertTriangle, Monitor, Sliders, Check, HelpCircle,
+  Share2, Link, Copy
+} from "lucide-react";
+import { Channel, Language, Translations } from "../types";
+
+interface VideoPlayerProps {
+  channel: Channel;
+  lang: Language;
+  t: Translations;
+  isEmbed?: boolean;
+}
+
+export default function VideoPlayer({ channel, lang, t, isEmbed = false }: VideoPlayerProps) {
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const hlsRef = useRef<Hls | null>(null);
+  const controlsTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  
+  const [isPlaying, setIsPlaying] = useState<boolean>(false);
+  const [isMuted, setIsMuted] = useState<boolean>(true); // Start muted to allow autoplays
+  const [volume, setVolume] = useState<number>(0.8);
+  const [isFullscreen, setIsFullscreen] = useState<boolean>(false);
+  const [isTheater, setIsTheater] = useState<boolean>(false);
+  const [showControls, setShowControls] = useState<boolean>(true);
+  
+  // Custom Auto/Direct/Proxy playback mode handling
+  const [playbackMode, setPlaybackMode] = useState<"auto" | "direct" | "proxy">("auto");
+  const [currentUseProxy, setCurrentUseProxy] = useState<boolean>(false);
+
+  // Auto-hide controls helper
+  const resetControlsTimeout = () => {
+    setShowControls(true);
+    if (controlsTimeoutRef.current) {
+      clearTimeout(controlsTimeoutRef.current);
+    }
+    controlsTimeoutRef.current = setTimeout(() => {
+      setShowControls(false);
+    }, 3000);
+  };
+
+  useEffect(() => {
+    resetControlsTimeout();
+    return () => {
+      if (controlsTimeoutRef.current) {
+        clearTimeout(controlsTimeoutRef.current);
+      }
+    };
+  }, []);
+
+  const handleMouseMove = () => {
+    resetControlsTimeout();
+  };
+
+  const handleTouchStart = () => {
+    resetControlsTimeout();
+  };
+
+  const handleMouseLeave = () => {
+    if (controlsTimeoutRef.current) {
+      clearTimeout(controlsTimeoutRef.current);
+    }
+    setShowControls(false);
+  };
+
+  const handleAutoButtonClick = () => {
+    const nextProxy = !currentUseProxy;
+    setCurrentUseProxy(nextProxy);
+    setIsLoading(true);
+    setHasError(false);
+    setErrorMessage("");
+    resetControlsTimeout();
+  };
+
+
+  // Sync playbackMode and currentUseProxy when channel or mode changes
+  useEffect(() => {
+    if (playbackMode === "auto") {
+      setCurrentUseProxy(false); // start direct by default on channel load/change
+    } else if (playbackMode === "direct") {
+      setCurrentUseProxy(false);
+    } else if (playbackMode === "proxy") {
+      setCurrentUseProxy(true);
+    }
+  }, [channel, playbackMode]);
+
+  // Stats
+  const [stats, setStats] = useState({
+    bufferLength: 0,
+    resolution: "Unknown",
+    latency: 0,
+    fps: 0
+  });
+  const [showStats, setShowStats] = useState<boolean>(false);
+  
+  // Video Loading & Errors
+  const [isLoading, setIsLoading] = useState<boolean>(true);
+  const [hasError, setHasError] = useState<boolean>(false);
+  const [errorMessage, setErrorMessage] = useState<string>("");
+  
+  // Custom Aspect Ratios: "video-standard" (16:9), "video-4-3" (4:3), "video-fill" (stretch/cover), "video-original"
+  const [aspectRatio, setAspectRatio] = useState<"16:9" | "4:3" | "fill" | "original">("16:9");
+  const [showAspectMenu, setShowAspectMenu] = useState<boolean>(false);
+
+  // Share Menu States
+  const [copiedApp, setCopiedApp] = useState<boolean>(false);
+
+  const handleCopyAppShareLink = () => {
+    if (!channel) return;
+    const shareUrl = `${window.location.origin}?channel=${encodeURIComponent(channel.name)}&embed=true`;
+    navigator.clipboard.writeText(shareUrl)
+      .then(() => {
+        setCopiedApp(true);
+        setTimeout(() => {
+          setCopiedApp(false);
+        }, 2000);
+      })
+      .catch((err) => console.error("Could not copy share link", err));
+  };
+
+  // Handle fallback transition to proxy in case of failures
+  const handleFallbackToProxy = () => {
+    if (playbackMode === "auto" && !currentUseProxy) {
+      console.log("Direct playback failed. Automatically falling back to Proxy mode...");
+      setCurrentUseProxy(true);
+      setIsLoading(true);
+      setHasError(false);
+      setErrorMessage("");
+      return true;
+    }
+    return false;
+  };
+
+  // Watchdog timer: If loading is taking too long in auto/direct mode, try proxying
+  useEffect(() => {
+    if (!isLoading || playbackMode !== "auto" || currentUseProxy) return;
+
+    const timeoutId = setTimeout(() => {
+      if (isLoading && playbackMode === "auto" && !currentUseProxy) {
+        console.log("Direct play connection timed out after 6s. Falling back to Proxy...");
+        handleFallbackToProxy();
+      }
+    }, 6000);
+
+    return () => clearTimeout(timeoutId);
+  }, [isLoading, playbackMode, currentUseProxy]);
+
+  // Construct URL
+  const getStreamUrl = () => {
+    if (!channel) return "";
+    if (currentUseProxy) {
+      // Append all custom headers if available so the server can inject them
+      const params = new URLSearchParams();
+      params.set("url", channel.url);
+      if (channel.headers) {
+        if (channel.headers.Referer) params.set("referer", channel.headers.Referer);
+        if (channel.headers.Origin) params.set("origin", channel.headers.Origin);
+        if (channel.headers["User-Agent"]) params.set("userAgent", channel.headers["User-Agent"]);
+        if (channel.headers["x-forwarded-for"]) params.set("xff", channel.headers["x-forwarded-for"]);
+      }
+      return `/api/stream?${params.toString()}`;
+    }
+    return channel.url;
+  };
+
+  const streamUrl = getStreamUrl();
+
+  // Initialize and tear down HLS.js
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video || !streamUrl) return;
+
+    // Reset player state
+    setIsLoading(true);
+    setHasError(false);
+    setErrorMessage("");
+    
+    // Destroy existing HLS instance
+    if (hlsRef.current) {
+      hlsRef.current.destroy();
+      hlsRef.current = null;
+    }
+
+    // Playback handling
+    if (Hls.isSupported()) {
+      const hlsConfig = {
+        enableWorker: true,
+        lowLatencyMode: true, // Enable low latency mode to start playback immediately
+        capLevelToPlayerSize: true, // Cap quality level to container size to save bandwidth on mobile
+        maxBufferLength: 8, // Keep initial buffering requirement small (8s) so streams start instantly
+        maxMaxBufferLength: 15, // Keep maximum buffer reasonably small to save data and prevent lags
+        backBufferLength: 10, // Maintain a small back buffer
+        abrBandwidthFactor: 0.6, // Be conservative to avoid sudden quality upgrades and subsequent stalls
+        abrBandwidthUpFactor: 0.4, // Upgrade quality slowly to ensure connection is genuinely stable
+        abrEwmaDefaultEstimate: 150000, // Assume a low-speed connection (150kbps) initially to force loading the lowest quality first
+      };
+      
+      const hls = new Hls(hlsConfig);
+      hlsRef.current = hls;
+
+      hls.loadSource(streamUrl);
+      hls.attachMedia(video);
+
+      hls.on(Hls.Events.MANIFEST_PARSED, () => {
+        setIsLoading(false);
+        video.play()
+          .then(() => setIsPlaying(true))
+          .catch((err) => {
+            console.log("Auto-play was blocked or failed, waiting for user click", err);
+            setIsPlaying(false);
+          });
+      });
+
+      // Handle HLS errors
+      hls.on(Hls.Events.ERROR, (event, data) => {
+        console.error("HLS Error:", data);
+        if (data.fatal) {
+          // Attempt automatic fallback if we are in auto mode and using direct play
+          if (playbackMode === "auto" && !currentUseProxy) {
+            const handled = handleFallbackToProxy();
+            if (handled) return;
+          }
+
+          switch (data.type) {
+            case Hls.ErrorTypes.NETWORK_ERROR:
+              console.log("Fatal network error, trying to recover...");
+              hls.startLoad();
+              break;
+            case Hls.ErrorTypes.MEDIA_ERROR:
+              console.log("Fatal media error, trying to recover...");
+              hls.recoverMediaError();
+              break;
+            default:
+              setIsLoading(false);
+              setHasError(true);
+              setErrorMessage(`${data.type}: ${data.details || "Fatal playback error"}`);
+              break;
+          }
+        }
+      });
+
+      // Stats monitoring
+      hls.on(Hls.Events.FRAG_BUFFERED, () => {
+        if (hls.media) {
+          const buffered = hls.media.buffered;
+          let bufferLength = 0;
+          if (buffered.length > 0) {
+            const currentTime = hls.media.currentTime;
+            for (let i = 0; i < buffered.length; i++) {
+              if (currentTime >= buffered.start(i) && currentTime <= buffered.end(i)) {
+                bufferLength = buffered.end(i) - currentTime;
+                break;
+              }
+            }
+          }
+
+          // Fetch active quality details
+          let resolution = "Auto";
+          if (hls.levels && hls.currentLevel >= 0) {
+            const level = hls.levels[hls.currentLevel];
+            if (level && level.width && level.height) {
+              resolution = `${level.width}x${level.height}`;
+            }
+          }
+
+          setStats((prev) => ({
+            ...prev,
+            bufferLength: parseFloat(bufferLength.toFixed(1)),
+            resolution
+          }));
+        }
+      });
+
+    } else if (video.canPlayType("application/vnd.apple.mpegurl")) {
+      // Fallback for Safari (Native HLS)
+      video.src = streamUrl;
+      video.addEventListener("loadedmetadata", () => {
+        setIsLoading(false);
+        video.play()
+          .then(() => setIsPlaying(true))
+          .catch(() => setIsPlaying(false));
+      });
+
+      video.addEventListener("error", (e) => {
+        // Attempt automatic fallback if we are in auto mode and using direct play
+        if (playbackMode === "auto" && !currentUseProxy) {
+          const handled = handleFallbackToProxy();
+          if (handled) return;
+        }
+        setIsLoading(false);
+        setHasError(true);
+        setErrorMessage("Native video element reported a loading error");
+      });
+    } else {
+      setIsLoading(false);
+      setHasError(true);
+      setErrorMessage("Your browser does not support HLS streaming.");
+    }
+
+    return () => {
+      if (hlsRef.current) {
+        hlsRef.current.destroy();
+        hlsRef.current = null;
+      }
+    };
+  }, [streamUrl]);
+
+  // Video controller interactions
+  const handlePlayPause = () => {
+    const video = videoRef.current;
+    if (!video) return;
+
+    if (isPlaying) {
+      video.pause();
+      setIsPlaying(false);
+    } else {
+      video.play()
+        .then(() => setIsPlaying(true))
+        .catch(() => setIsPlaying(false));
+    }
+  };
+
+  const handleMuteToggle = () => {
+    const video = videoRef.current;
+    if (!video) return;
+
+    const nextMute = !isMuted;
+    video.muted = nextMute;
+    setIsMuted(nextMute);
+    if (!nextMute && volume === 0) {
+      handleVolumeChange(0.5);
+    }
+  };
+
+  const handleVolumeChange = (val: number) => {
+    const video = videoRef.current;
+    if (!video) return;
+
+    video.volume = val;
+    setVolume(val);
+    if (val > 0) {
+      video.muted = false;
+      setIsMuted(false);
+    } else {
+      video.muted = true;
+      setIsMuted(true);
+    }
+  };
+
+  const handleFullscreenToggle = () => {
+    const container = containerRef.current;
+    if (!container) return;
+
+    if (!document.fullscreenElement) {
+      container.requestFullscreen().then(() => {
+        setIsFullscreen(true);
+        // Automatically attempt to lock to landscape mode on mobile/touch screens
+        const orientation = screen.orientation || (screen as any).mozOrientation || (screen as any).msOrientation;
+        if (orientation && typeof (orientation as any).lock === "function") {
+          (orientation as any).lock("landscape").catch((err: any) => {
+            console.log("Screen orientation lock was rejected or not supported:", err);
+          });
+        }
+      }).catch((err) => {
+        console.error("Error attempting to enable fullscreen:", err);
+      });
+    } else {
+      const orientation = screen.orientation || (screen as any).mozOrientation || (screen as any).msOrientation;
+      if (orientation && typeof (orientation as any).unlock === "function") {
+        try {
+          (orientation as any).unlock();
+        } catch (err) {
+          console.log("Screen orientation unlock failed:", err);
+        }
+      }
+      document.exitFullscreen();
+      setIsFullscreen(false);
+    }
+  };
+
+  // Sync fullscreen state in case user exits with Esc
+  useEffect(() => {
+    const handleFullscreenChange = () => {
+      const isCurrentlyFullscreen = document.fullscreenElement === containerRef.current;
+      setIsFullscreen(isCurrentlyFullscreen);
+      const orientation = screen.orientation || (screen as any).mozOrientation || (screen as any).msOrientation;
+      if (!isCurrentlyFullscreen && orientation && typeof (orientation as any).unlock === "function") {
+        try {
+          (orientation as any).unlock();
+        } catch (err) {
+          console.log("Screen orientation unlock failed:", err);
+        }
+      }
+    };
+    document.addEventListener("fullscreenchange", handleFullscreenChange);
+    return () => {
+      document.removeEventListener("fullscreenchange", handleFullscreenChange);
+    };
+  }, []);
+
+  const handleReload = () => {
+    const currentSrc = streamUrl;
+    setIsLoading(true);
+    setHasError(false);
+    setErrorMessage("");
+    if (hlsRef.current) {
+      hlsRef.current.loadSource(currentSrc);
+      hlsRef.current.startLoad();
+    } else if (videoRef.current) {
+      videoRef.current.src = currentSrc;
+      videoRef.current.load();
+    }
+  };
+
+  // Get Aspect Ratio class
+  const getAspectClass = () => {
+    switch (aspectRatio) {
+      case "16:9": return "aspect-video object-contain";
+      case "4:3": return "aspect-[4/3] object-contain";
+      case "fill": return "w-full h-full object-fill";
+      case "original": return "w-auto h-auto max-w-full max-h-full object-contain";
+    }
+  };
+
+  return (
+    <div 
+      id="tv-player-card" 
+      className={isEmbed 
+        ? "w-full h-full border-0 rounded-none overflow-hidden relative flex flex-col flex-1 bg-black" 
+        : "bg-[#050505] border border-white/10 rounded-3xl overflow-hidden shadow-2xl relative transition-all duration-300"
+      }
+    >
+      
+      {/* Dynamic Player Wrapper */}
+      <div 
+        ref={containerRef} 
+        onMouseMove={handleMouseMove}
+        onTouchStart={handleTouchStart}
+        onMouseLeave={handleMouseLeave}
+        className={`relative w-full overflow-hidden bg-black flex items-center justify-center transition-all ${
+          isEmbed ? "h-full flex-1" : (isTheater ? "h-[70vh]" : "aspect-video")
+        } ${showControls ? "cursor-default" : "cursor-none"}`}
+      >
+        {/* Actual Video Tag */}
+        <video
+          ref={videoRef}
+          className={`w-full max-h-full ${getAspectClass()}`}
+          playsInline
+          muted={isMuted}
+          onClick={handlePlayPause}
+        />
+
+        {/* Playback Mode Floating HUD Badge Overlay */}
+        <div className={`absolute top-4 left-4 z-20 flex flex-wrap gap-2 pointer-events-none transition-all duration-300 ${
+          showControls ? "opacity-100 translate-y-0" : "opacity-0 -translate-y-2"
+        }`}>
+          <span className={`px-2.5 py-1 rounded-md text-[10px] font-bold tracking-wider uppercase font-sans flex items-center gap-1.5 backdrop-blur-md shadow-md ${
+            currentUseProxy 
+              ? "bg-red-600/90 text-white border border-red-500/30" 
+              : "bg-neutral-900/90 text-neutral-200 border border-neutral-800"
+          }`}>
+            <span className={`w-1.5 h-1.5 rounded-full ${currentUseProxy ? "bg-red-400 animate-pulse" : "bg-green-400 animate-ping"}`} />
+            {currentUseProxy ? (lang === "bn" ? "প্রক্সি প্লেব্যাক" : "PROXY PLAYBACK") : (lang === "bn" ? "ডাইরেক্ট প্লেব্যাক" : "DIRECT PLAYBACK")}
+          </span>
+          
+          {playbackMode === "auto" && (
+            <span className="px-2 py-1 rounded-md text-[10px] font-bold tracking-wider uppercase font-sans bg-black/75 text-neutral-400 border border-white/5 backdrop-blur-md">
+              ⚡ AUTO FALLBACK
+            </span>
+          )}
+        </div>
+
+        {/* Ambient background glow if logo is present */}
+        {channel?.logo && (
+          <div 
+            className="absolute inset-0 pointer-events-none opacity-10 blur-3xl scale-110 -z-10 transition-all duration-700"
+            style={{ backgroundImage: `url(${channel.logo})`, backgroundPosition: 'center', backgroundSize: 'cover' }}
+          />
+        )}
+
+        {/* Loading Spinner Overlays */}
+        {isLoading && (
+          <div className="absolute inset-0 bg-[#050505]/90 backdrop-blur-sm flex flex-col items-center justify-center z-10">
+            <div className="relative w-16 h-16">
+              <div className="absolute inset-0 border-4 border-red-600/20 rounded-full"></div>
+              <div className="absolute inset-0 border-4 border-t-red-600 rounded-full animate-spin"></div>
+            </div>
+            <p className="mt-4 text-sm font-bold text-neutral-300 animate-pulse tracking-wide font-sans">
+              {lang === "bn" ? "চ্যানেল লোড হচ্ছে..." : "Loading Live Channel..."}
+            </p>
+          </div>
+        )}
+
+        {/* Error / Offline Stream Overlay */}
+        {hasError && (
+          <div className="absolute inset-0 bg-neutral-950/90 backdrop-blur-sm flex flex-col items-center justify-center p-6 text-center z-10 animate-fade-in">
+            <AlertTriangle className="w-16 h-16 text-red-500 mb-4 animate-bounce" />
+            <h3 className="text-xl font-bold text-white mb-2 font-sans">
+              {lang === "bn" ? "স্ট্রিম চালু করতে সমস্যা হয়েছে" : "Failed to load Live Stream"}
+            </h3>
+            <p className="text-xs text-neutral-400 max-w-md mb-6 font-mono">
+              {errorMessage || (lang === "bn" ? "অনাকাঙ্ক্ষিত নেটওয়ার্ক বিভ্রাট।" : "An unexpected stream source error occurred.")}
+            </p>
+            
+            {/* Action Buttons to help troubleshoot stream */}
+            <div className="flex flex-wrap gap-3 justify-center">
+              <button 
+                onClick={handleReload}
+                className="px-5 py-2.5 bg-red-600 hover:bg-red-500 text-white font-bold rounded-xl flex items-center gap-2 transition-all shadow-lg shadow-red-600/30 active:scale-95 text-sm font-sans"
+              >
+                <RotateCw className="w-4 h-4" />
+                {t.reloadStream}
+              </button>
+              
+              <button 
+                onClick={() => {
+                  setCurrentUseProxy(!currentUseProxy);
+                  resetControlsTimeout();
+                }}
+                className="px-5 py-2.5 bg-neutral-800 hover:bg-neutral-700 text-white font-medium rounded-xl flex items-center gap-2 transition-all active:scale-95 text-sm font-sans"
+              >
+                <Sliders className="w-4 h-4" />
+                {currentUseProxy ? (lang === "bn" ? "সরাসরি প্লেব্যাক ট্রাই করুন" : "Try Direct Play") : (lang === "bn" ? "প্রক্সি মোড ট্রাই করুন" : "Try Proxy Mode")}
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Controls Overlay Bar - Bottom Gradient */}
+        <div className={`absolute bottom-0 inset-x-0 bg-gradient-to-t from-black/95 via-black/50 to-transparent p-4 transition-all duration-300 z-10 flex flex-col gap-2 ${
+          showControls ? "opacity-100 translate-y-0" : "opacity-0 translate-y-2 pointer-events-none"
+        }`}>
+          
+          {/* Progress bar (simulated live dot tracker) */}
+          <div className="w-full flex items-center gap-2">
+            <div className="w-2 h-2 rounded-full bg-red-500 animate-ping"></div>
+            <span className="text-[10px] font-mono uppercase tracking-wider text-red-500 font-bold">
+              {t.liveBadge}
+            </span>
+            <div className="h-0.5 flex-1 bg-neutral-800 rounded-full overflow-hidden">
+              <div className="h-full w-full bg-red-500"></div>
+            </div>
+          </div>
+
+          {/* Core Player Controls Row */}
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-1 sm:gap-4">
+              {/* Play/Pause */}
+              <button 
+                onClick={handlePlayPause}
+                title={isPlaying ? t.pause : t.play}
+                className="p-1.5 sm:p-2 hover:bg-white/10 rounded-lg text-white transition-all active:scale-90"
+              >
+                {isPlaying ? <Pause className="w-4 h-4 sm:w-5 sm:h-5 fill-white" /> : <Play className="w-4 h-4 sm:w-5 sm:h-5 fill-white" />}
+              </button>
+
+              {/* Volume Group */}
+              <div className="flex items-center gap-1 sm:gap-2 group/volume">
+                <button 
+                  onClick={handleMuteToggle}
+                  title={isMuted ? t.unmute : t.mute}
+                  className="p-1.5 sm:p-2 hover:bg-white/10 rounded-lg text-white transition-all active:scale-90"
+                >
+                  {isMuted ? <VolumeX className="w-4 h-4 sm:w-5 sm:h-5" /> : <Volume2 className="w-4 h-4 sm:w-5 sm:h-5" />}
+                </button>
+                <input 
+                  type="range"
+                  min="0"
+                  max="1"
+                  step="0.05"
+                  value={isMuted ? 0 : volume}
+                  onChange={(e) => handleVolumeChange(parseFloat(e.target.value))}
+                  className="hidden sm:inline-block w-14 sm:w-16 md:w-24 h-1 accent-red-600 bg-neutral-700 rounded-lg cursor-pointer transition-all duration-300"
+                />
+              </div>
+
+              {/* Interactive single AUTO server switcher button */}
+              <button
+                onClick={handleAutoButtonClick}
+                className={`px-1.5 py-1 sm:px-3 sm:py-1.5 rounded-lg text-[9px] sm:text-[10px] font-extrabold uppercase tracking-wider transition-all flex items-center gap-1 sm:gap-1.5 active:scale-95 border ${
+                  currentUseProxy
+                    ? "bg-red-600 border-red-500 text-white shadow-md shadow-red-600/20"
+                    : "bg-neutral-900 border-neutral-800 text-neutral-300 hover:text-white"
+                }`}
+                title={lang === "bn" ? "সার্ভার পরিবর্তন করতে ক্লিক করুন" : "Click to switch server"}
+              >
+                <span className={`w-1 h-1 sm:w-1.5 sm:h-1.5 rounded-full ${currentUseProxy ? "bg-white animate-pulse" : "bg-red-500 animate-ping"}`} />
+                <span>{lang === "bn" ? "অটো" : "AUTO"}</span>
+                <span className="text-[7px] sm:text-[8px] opacity-65 font-medium">
+                  ({currentUseProxy ? (lang === "bn" ? "প্রক্সি" : "PROXY") : (lang === "bn" ? "ডাইরেক্ট" : "DIRECT")})
+                </span>
+              </button>
+            </div>
+
+            <div className="flex items-center gap-0.5 sm:gap-2">
+              {/* Stats Panel Toggle */}
+              <button 
+                onClick={() => setShowStats(!showStats)}
+                title={t.stats}
+                className={`p-1.5 sm:p-2 hover:bg-white/10 rounded-lg transition-all ${showStats ? "text-red-500 bg-neutral-800" : "text-white"}`}
+              >
+                <Activity className="w-4 h-4 sm:w-5 sm:h-5" />
+              </button>
+
+              {/* Aspect Ratio Menu Toggle */}
+              <div className="relative">
+                <button 
+                  onClick={() => {
+                    setShowAspectMenu(!showAspectMenu);
+                  }}
+                  title={t.aspectRatio}
+                  className={`p-1.5 sm:p-2 hover:bg-white/10 rounded-lg text-white transition-all ${showAspectMenu ? "text-red-500 bg-neutral-800" : ""}`}
+                >
+                  <Monitor className="w-4 h-4 sm:w-5 sm:h-5" />
+                </button>
+                {showAspectMenu && (
+                  <div className="absolute bottom-12 right-0 bg-[#050505] border border-neutral-800 rounded-lg shadow-xl p-1.5 min-w-[130px] z-20 flex flex-col gap-1 text-xs">
+                    {(["16:9", "4:3", "fill", "original"] as const).map((ratio) => (
+                      <button
+                        key={ratio}
+                        onClick={() => {
+                          setAspectRatio(ratio);
+                          setShowAspectMenu(false);
+                        }}
+                        className={`w-full text-left px-2.5 py-1.5 rounded flex items-center justify-between hover:bg-neutral-800 ${aspectRatio === ratio ? "text-red-500 font-bold" : "text-neutral-300"}`}
+                      >
+                        <span>{ratio.toUpperCase()}</span>
+                        {aspectRatio === ratio && <Check className="w-3.5 h-3.5" />}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* Channel Share Button */}
+              <button 
+                onClick={() => {
+                  handleCopyAppShareLink();
+                  resetControlsTimeout();
+                }}
+                title={lang === "bn" ? "চ্যানেল লিংক কপি করুন" : "Copy Channel Share Link"}
+                className={`p-1.5 sm:p-2 rounded-lg text-white transition-all flex items-center gap-1.5 active:scale-95 ${
+                  copiedApp 
+                    ? "bg-green-600/20 text-green-500 border border-green-500/30" 
+                    : "hover:bg-white/10"
+                }`}
+              >
+                {copiedApp ? (
+                  <>
+                    <Check className="w-4 h-4 sm:w-5 sm:h-5 text-green-400" />
+                    <span className="text-[10px] sm:text-xs font-sans font-bold text-green-400">
+                      {lang === "bn" ? "কপি হয়েছে" : "Copied"}
+                    </span>
+                  </>
+                ) : (
+                  <>
+                    <Share2 className="w-4 h-4 sm:w-5 sm:h-5 text-neutral-200" />
+                    <span className="text-[10px] sm:text-xs font-sans font-bold hidden md:inline text-neutral-200">
+                      {lang === "bn" ? "শেয়ার" : "Share"}
+                    </span>
+                  </>
+                )}
+              </button>
+
+              {/* Reload Stream Button */}
+              <button 
+                onClick={handleReload}
+                title={t.reloadStream}
+                className="p-1.5 sm:p-2 hover:bg-white/10 rounded-lg text-white transition-all active:scale-90"
+              >
+                <RotateCw className="w-4 h-4 sm:w-5 sm:h-5" />
+              </button>
+
+              {/* Fullscreen Toggle */}
+              <button 
+                onClick={handleFullscreenToggle}
+                className="p-1.5 sm:p-2 hover:bg-white/10 rounded-lg text-white transition-all active:scale-90"
+              >
+                <Maximize className="w-4 h-4 sm:w-5 sm:h-5" />
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Video Statistics & Performance Info Panel Overlay */}
+      {showStats && (
+        <div className="bg-[#050505] border-t border-neutral-850 px-5 py-4 grid grid-cols-2 md:grid-cols-4 gap-4 animate-fade-in">
+          <div>
+            <div className="text-[10px] uppercase font-mono text-neutral-500 tracking-wider mb-1">
+              {t.resolution}
+            </div>
+            <div className="font-mono text-sm text-red-500 font-bold">
+              {stats.resolution}
+            </div>
+          </div>
+          <div>
+            <div className="text-[10px] uppercase font-mono text-neutral-500 tracking-wider mb-1">
+              {t.buffer}
+            </div>
+            <div className="font-mono text-sm text-red-500 font-bold">
+              {stats.bufferLength}s
+            </div>
+          </div>
+          <div>
+            <div className="text-[10px] uppercase font-mono text-neutral-500 tracking-wider mb-1">
+              Playback Technology
+            </div>
+            <div className="font-mono text-sm text-neutral-300">
+              Hls.js Engine
+            </div>
+          </div>
+          <div>
+            <div className="text-[10px] uppercase font-mono text-neutral-500 tracking-wider mb-1">
+              Active Connection Mode
+            </div>
+            <div className="font-mono text-sm text-neutral-300">
+              {currentUseProxy ? "Secure Proxy (Encrypted)" : "Direct IP Access"}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Under-Player Metadata & Live Playlist Stream Controls Info */}
+      {!isEmbed && (
+        <div className="bg-[#050505] px-6 py-5 border-t border-neutral-800 flex flex-col md:flex-row md:items-center justify-between gap-4">
+          <div className="flex items-start gap-4">
+            {channel?.logo ? (
+              <img 
+                src={channel.logo} 
+                alt={channel.name} 
+                referrerPolicy="no-referrer"
+                onError={(e) => {
+                  // If logo fails to load, replace with dummy text initials
+                  e.currentTarget.style.display = "none";
+                }}
+                className="w-14 h-14 object-contain rounded-xl bg-[#050505] border border-neutral-800 p-1 bg-white/5"
+              />
+            ) : (
+              <div className="w-14 h-14 rounded-xl bg-gradient-to-br from-red-600 to-red-950 flex items-center justify-center font-bold text-white text-xl font-sans italic">
+                {channel?.name?.slice(0, 2).toUpperCase()}
+              </div>
+            )}
+            
+            <div>
+              <div className="flex items-center gap-2 mb-1">
+                <span className="px-2.5 py-0.5 bg-red-600/10 text-red-500 text-[10px] font-mono rounded-full font-bold uppercase tracking-wider">
+                  {channel?.group || "Sports"}
+                </span>
+                <span className="flex items-center gap-1.5 text-xs text-red-500 font-semibold animate-pulse font-sans">
+                  <span className="w-1.5 h-1.5 bg-red-600 rounded-full animate-ping"></span>
+                  {t.liveBadge}
+                </span>
+              </div>
+              <h2 className="text-xl font-black text-white font-sans tracking-tight">
+                {channel?.name}
+              </h2>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}

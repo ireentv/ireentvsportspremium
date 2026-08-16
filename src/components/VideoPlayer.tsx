@@ -27,10 +27,6 @@ export default function VideoPlayer({ channel, lang, t, isEmbed = false }: Video
   const [isTheater, setIsTheater] = useState<boolean>(false);
   const [showControls, setShowControls] = useState<boolean>(true);
   
-  // Custom Auto/Direct/Proxy playback mode handling
-  const [playbackMode, setPlaybackMode] = useState<"auto" | "direct" | "proxy">("auto");
-  const [currentUseProxy, setCurrentUseProxy] = useState<boolean>(false);
-
   // Auto-hide controls helper
   const resetControlsTimeout = () => {
     setShowControls(true);
@@ -66,26 +62,7 @@ export default function VideoPlayer({ channel, lang, t, isEmbed = false }: Video
     setShowControls(false);
   };
 
-  const handleAutoButtonClick = () => {
-    const nextProxy = !currentUseProxy;
-    setCurrentUseProxy(nextProxy);
-    setIsLoading(true);
-    setHasError(false);
-    setErrorMessage("");
-    resetControlsTimeout();
-  };
 
-
-  // Sync playbackMode and currentUseProxy when channel or mode changes
-  useEffect(() => {
-    if (playbackMode === "auto") {
-      setCurrentUseProxy(false); // start direct by default on channel load/change
-    } else if (playbackMode === "direct") {
-      setCurrentUseProxy(false);
-    } else if (playbackMode === "proxy") {
-      setCurrentUseProxy(true);
-    }
-  }, [channel, playbackMode]);
 
   // Stats
   const [stats, setStats] = useState({
@@ -121,49 +98,9 @@ export default function VideoPlayer({ channel, lang, t, isEmbed = false }: Video
       .catch((err) => console.error("Could not copy share link", err));
   };
 
-  // Handle fallback transition to proxy in case of failures
-  const handleFallbackToProxy = () => {
-    if (playbackMode === "auto" && !currentUseProxy) {
-      console.log("Direct playback failed. Automatically falling back to Proxy mode...");
-      setCurrentUseProxy(true);
-      setIsLoading(true);
-      setHasError(false);
-      setErrorMessage("");
-      return true;
-    }
-    return false;
-  };
-
-  // Watchdog timer: If loading is taking too long in auto/direct mode, try proxying
-  useEffect(() => {
-    if (!isLoading || playbackMode !== "auto" || currentUseProxy) return;
-
-    const timeoutId = setTimeout(() => {
-      if (isLoading && playbackMode === "auto" && !currentUseProxy) {
-        console.log("Direct play connection timed out after 6s. Falling back to Proxy...");
-        handleFallbackToProxy();
-      }
-    }, 6000);
-
-    return () => clearTimeout(timeoutId);
-  }, [isLoading, playbackMode, currentUseProxy]);
-
   // Construct URL
   const getStreamUrl = () => {
-    if (!channel) return "";
-    if (currentUseProxy) {
-      // Append all custom headers if available so the server can inject them
-      const params = new URLSearchParams();
-      params.set("url", channel.url);
-      if (channel.headers) {
-        if (channel.headers.Referer) params.set("referer", channel.headers.Referer);
-        if (channel.headers.Origin) params.set("origin", channel.headers.Origin);
-        if (channel.headers["User-Agent"]) params.set("userAgent", channel.headers["User-Agent"]);
-        if (channel.headers["x-forwarded-for"]) params.set("xff", channel.headers["x-forwarded-for"]);
-      }
-      return `/api/stream?${params.toString()}`;
-    }
-    return channel.url;
+    return channel ? channel.url : "";
   };
 
   const streamUrl = getStreamUrl();
@@ -218,12 +155,6 @@ export default function VideoPlayer({ channel, lang, t, isEmbed = false }: Video
       hls.on(Hls.Events.ERROR, (event, data) => {
         console.error("HLS Error:", data);
         if (data.fatal) {
-          // Attempt automatic fallback if we are in auto mode and using direct play
-          if (playbackMode === "auto" && !currentUseProxy) {
-            const handled = handleFallbackToProxy();
-            if (handled) return;
-          }
-
           switch (data.type) {
             case Hls.ErrorTypes.NETWORK_ERROR:
               console.log("Fatal network error, trying to recover...");
@@ -285,11 +216,6 @@ export default function VideoPlayer({ channel, lang, t, isEmbed = false }: Video
       });
 
       video.addEventListener("error", (e) => {
-        // Attempt automatic fallback if we are in auto mode and using direct play
-        if (playbackMode === "auto" && !currentUseProxy) {
-          const handled = handleFallbackToProxy();
-          if (handled) return;
-        }
         setIsLoading(false);
         setHasError(true);
         setErrorMessage("Native video element reported a loading error");
@@ -457,20 +383,10 @@ export default function VideoPlayer({ channel, lang, t, isEmbed = false }: Video
         <div className={`absolute top-4 left-4 z-20 flex flex-wrap gap-2 pointer-events-none transition-all duration-300 ${
           showControls ? "opacity-100 translate-y-0" : "opacity-0 -translate-y-2"
         }`}>
-          <span className={`px-2.5 py-1 rounded-md text-[10px] font-bold tracking-wider uppercase font-sans flex items-center gap-1.5 backdrop-blur-md shadow-md ${
-            currentUseProxy 
-              ? "bg-red-600/90 text-white border border-red-500/30" 
-              : "bg-neutral-900/90 text-neutral-200 border border-neutral-800"
-          }`}>
-            <span className={`w-1.5 h-1.5 rounded-full ${currentUseProxy ? "bg-red-400 animate-pulse" : "bg-green-400 animate-ping"}`} />
-            {currentUseProxy ? (lang === "bn" ? "প্রক্সি প্লেব্যাক" : "PROXY PLAYBACK") : (lang === "bn" ? "ডাইরেক্ট প্লেব্যাক" : "DIRECT PLAYBACK")}
+          <span className="px-2.5 py-1 rounded-md text-[10px] font-bold tracking-wider uppercase font-sans flex items-center gap-1.5 backdrop-blur-md shadow-md bg-neutral-900/90 text-neutral-200 border border-neutral-800">
+            <span className="w-1.5 h-1.5 rounded-full bg-green-400 animate-ping" />
+            {lang === "bn" ? "ডাইরেক্ট প্লেব্যাক" : "DIRECT PLAYBACK"}
           </span>
-          
-          {playbackMode === "auto" && (
-            <span className="px-2 py-1 rounded-md text-[10px] font-bold tracking-wider uppercase font-sans bg-black/75 text-neutral-400 border border-white/5 backdrop-blur-md">
-              ⚡ AUTO FALLBACK
-            </span>
-          )}
         </div>
 
         {/* Ambient background glow if logo is present */}
@@ -513,17 +429,6 @@ export default function VideoPlayer({ channel, lang, t, isEmbed = false }: Video
               >
                 <RotateCw className="w-4 h-4" />
                 {t.reloadStream}
-              </button>
-              
-              <button 
-                onClick={() => {
-                  setCurrentUseProxy(!currentUseProxy);
-                  resetControlsTimeout();
-                }}
-                className="px-5 py-2.5 bg-neutral-800 hover:bg-neutral-700 text-white font-medium rounded-xl flex items-center gap-2 transition-all active:scale-95 text-sm font-sans"
-              >
-                <Sliders className="w-4 h-4" />
-                {currentUseProxy ? (lang === "bn" ? "সরাসরি প্লেব্যাক ট্রাই করুন" : "Try Direct Play") : (lang === "bn" ? "প্রক্সি মোড ট্রাই করুন" : "Try Proxy Mode")}
               </button>
             </div>
           </div>
@@ -577,22 +482,6 @@ export default function VideoPlayer({ channel, lang, t, isEmbed = false }: Video
                 />
               </div>
 
-              {/* Interactive single AUTO server switcher button */}
-              <button
-                onClick={handleAutoButtonClick}
-                className={`px-1.5 py-1 sm:px-3 sm:py-1.5 rounded-lg text-[9px] sm:text-[10px] font-extrabold uppercase tracking-wider transition-all flex items-center gap-1 sm:gap-1.5 active:scale-95 border ${
-                  currentUseProxy
-                    ? "bg-red-600 border-red-500 text-white shadow-md shadow-red-600/20"
-                    : "bg-neutral-900 border-neutral-800 text-neutral-300 hover:text-white"
-                }`}
-                title={lang === "bn" ? "সার্ভার পরিবর্তন করতে ক্লিক করুন" : "Click to switch server"}
-              >
-                <span className={`w-1 h-1 sm:w-1.5 sm:h-1.5 rounded-full ${currentUseProxy ? "bg-white animate-pulse" : "bg-red-500 animate-ping"}`} />
-                <span>{lang === "bn" ? "অটো" : "AUTO"}</span>
-                <span className="text-[7px] sm:text-[8px] opacity-65 font-medium">
-                  ({currentUseProxy ? (lang === "bn" ? "প্রক্সি" : "PROXY") : (lang === "bn" ? "ডাইরেক্ট" : "DIRECT")})
-                </span>
-              </button>
             </div>
 
             <div className="flex items-center gap-0.5 sm:gap-2">
@@ -718,7 +607,7 @@ export default function VideoPlayer({ channel, lang, t, isEmbed = false }: Video
               Active Connection Mode
             </div>
             <div className="font-mono text-sm text-neutral-300">
-              {currentUseProxy ? "Secure Proxy (Encrypted)" : "Direct IP Access"}
+              Direct IP Access
             </div>
           </div>
         </div>

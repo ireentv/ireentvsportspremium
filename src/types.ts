@@ -37,6 +37,24 @@ export interface PlaylistData {
 
 export type Language = "bn" | "en";
 
+export interface ManagedUser {
+  id: string;
+  username: string;
+  password: string;
+  name?: string;
+  notes?: string;
+  isLocked: boolean;
+  createdAt: string;
+  lastLogin?: string;
+}
+
+export interface AuthSession {
+  role: "admin" | "user";
+  username?: string;
+  name?: string;
+  unlockedAt: string;
+}
+
 export interface Translations {
   title: string;
   subtitle: string;

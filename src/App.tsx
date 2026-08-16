@@ -1,23 +1,29 @@
 import React, { useEffect, useState, useMemo } from "react";
 import { 
   Search, Tv, Globe, Languages, X, ExternalLink, Info, 
-  Sparkles, Heart, ListFilter, Send, Share2, Star, Check, AlertCircle, RefreshCw, ArrowLeft, Lock
+  Sparkles, Heart, ListFilter, Send, Share2, Star, Check, AlertCircle, RefreshCw, ArrowLeft, Lock, Shield, User as UserIcon, Crown
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
-import { Channel, PlaylistData, Language } from "./types";
+import { Channel, PlaylistData, Language, AuthSession } from "./types";
 import { translations } from "./translations";
 import VideoPlayer from "./components/VideoPlayer";
 import ChannelCard from "./components/ChannelCard";
 import LockScreen from "./components/LockScreen";
+import AdminPanel from "./components/AdminPanel";
+import VipPackagesModal from "./components/VipPackagesModal";
+import { getStoredSession, saveSession, clearSession } from "./utils/auth";
 
 export default function App() {
   const [playlist, setPlaylist] = useState<PlaylistData | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
   const [fetchError, setFetchError] = useState<string | null>(null);
   
-  // Site Lock State
+  // Site Lock & Session State
+  const [authSession, setAuthSession] = useState<AuthSession | null>(() => getStoredSession());
   const [isUnlocked, setIsUnlocked] = useState<boolean>(() => {
     try {
+      const session = getStoredSession();
+      if (session) return true;
       return (
         localStorage.getItem("ireentv_unlocked") === "true" ||
         sessionStorage.getItem("ireentv_unlocked") === "true"
@@ -26,6 +32,9 @@ export default function App() {
       return false;
     }
   });
+
+  const [showAdminPanel, setShowAdminPanel] = useState<boolean>(false);
+  const [showVipModal, setShowVipModal] = useState<boolean>(false);
 
   // UI States
   const [searchQuery, setSearchQuery] = useState<string>("");
@@ -40,13 +49,10 @@ export default function App() {
 
   // Lock site function
   const handleLock = () => {
-    try {
-      localStorage.removeItem("ireentv_unlocked");
-      sessionStorage.removeItem("ireentv_unlocked");
-    } catch (e) {
-      console.error(e);
-    }
+    clearSession();
+    setAuthSession(null);
     setIsUnlocked(false);
+    setShowAdminPanel(false);
   };
 
   // Check for embed mode on mount
@@ -207,7 +213,11 @@ export default function App() {
   if (!isUnlocked) {
     return (
       <LockScreen
-        onUnlock={() => setIsUnlocked(true)}
+        onUnlock={(session) => {
+          setAuthSession(session);
+          setIsUnlocked(true);
+          saveSession(session, true);
+        }}
         lang={lang}
         isEmbed={isEmbed}
       />
@@ -332,10 +342,10 @@ export default function App() {
             </button>
           </div>
 
-          {/* Quick Playlist Metadata or Info Ticker and Lock Button */}
-          <div className="flex items-center gap-3">
+          {/* Header Action Controls */}
+          <div className="flex items-center gap-2.5 flex-wrap justify-end">
             {playlist && (
-              <div className="hidden lg:flex items-center gap-6 bg-[#050505]/60 px-4 py-1.5 rounded-full border border-neutral-800/60 text-xs text-neutral-400 font-sans">
+              <div className="hidden xl:flex items-center gap-6 bg-[#050505]/60 px-4 py-1.5 rounded-full border border-neutral-800/60 text-xs text-neutral-400 font-sans">
                 <div className="flex items-center gap-1.5">
                   <span className="w-1.5 h-1.5 bg-red-600 rounded-full"></span>
                   <span>{t.channelsCount}: <strong className="text-white font-mono">{playlist.channels_amount || playlist.channels.length}</strong></span>
@@ -348,11 +358,52 @@ export default function App() {
               </div>
             )}
 
-            {/* Lock Button */}
+            {/* Logged in User/Admin Badge */}
+            {authSession && (
+              <div className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-neutral-900/80 border border-neutral-800 text-xs font-mono">
+                {authSession.role === "admin" ? (
+                  <>
+                    <Shield className="w-3.5 h-3.5 text-red-500" />
+                    <span className="font-bold text-red-400">Admin</span>
+                  </>
+                ) : (
+                  <>
+                    <UserIcon className="w-3.5 h-3.5 text-neutral-400" />
+                    <span className="font-bold text-white">@{authSession.username}</span>
+                  </>
+                )}
+              </div>
+            )}
+
+            {/* VIP Package Info Button */}
+            <button
+              id="header-vip-package-btn"
+              onClick={() => setShowVipModal(true)}
+              title={lang === "bn" ? "ভিআইপি প্যাকেজ রেট ও বিস্তারিত" : "VIP Package Details"}
+              className="px-3.5 py-2 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-neutral-950 rounded-xl text-xs font-black transition-all flex items-center gap-1.5 active:scale-95 shadow-md shadow-amber-950/40 border border-amber-400/40"
+            >
+              <Crown className="w-3.5 h-3.5 text-neutral-950" />
+              <span>{lang === "bn" ? "VIP প্যাকেজ" : "VIP Packages"}</span>
+            </button>
+
+            {/* Admin Panel Button (for admin or accessible manager) */}
+            {authSession?.role === "admin" && (
+              <button
+                id="header-admin-panel-btn"
+                onClick={() => setShowAdminPanel(true)}
+                title={lang === "bn" ? "এডমিন ইউজার কন্ট্রোল প্যানেল" : "Admin User Manager"}
+                className="px-3.5 py-2 bg-gradient-to-r from-red-600 to-red-800 hover:from-red-500 hover:to-red-700 text-white rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 active:scale-95 shadow-md shadow-red-950/60 border border-red-500/30"
+              >
+                <Shield className="w-3.5 h-3.5 text-yellow-300" />
+                <span>{lang === "bn" ? "এডমিন প্যানেল" : "Admin Panel"}</span>
+              </button>
+            )}
+
+            {/* Lock / Logout Button */}
             <button
               id="header-lock-btn"
               onClick={handleLock}
-              title={lang === "bn" ? "ওয়েবসাইট লক করুন" : "Lock Website"}
+              title={lang === "bn" ? "ওয়েবসাইট লক করুন / লগআউট" : "Lock Website / Logout"}
               className="px-3 py-2 bg-neutral-900/80 hover:bg-red-950/40 border border-neutral-800 hover:border-red-600/50 text-neutral-300 hover:text-red-400 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 active:scale-95 shadow-sm"
             >
               <Lock className="w-3.5 h-3.5 text-red-500" />
@@ -650,7 +701,7 @@ export default function App() {
               : "A premium auto-updating sports TV streaming dashboard. All streaming assets and layouts are loaded and dynamically rendered from open IPTV sources."}
           </p>
 
-          <div className="flex flex-col sm:flex-row items-center gap-1 sm:gap-3 text-neutral-400 mt-2 font-sans font-semibold text-xs">
+          <div className="flex flex-col sm:flex-row items-center gap-1 sm:gap-3 text-neutral-400 mt-2 font-sans font-semibold text-xs flex-wrap justify-center">
             <span>Developer: <strong className="text-white">MD ANAMUL HOQUE</strong></span>
             <span className="hidden sm:inline text-neutral-700">|</span>
             <a 
@@ -661,6 +712,29 @@ export default function App() {
             >
               https://anamul.pages.dev/
             </a>
+            <span className="hidden sm:inline text-neutral-700">|</span>
+            <button
+              id="footer-vip-package-btn"
+              onClick={() => setShowVipModal(true)}
+              className="text-amber-400 hover:text-amber-300 flex items-center gap-1 transition-colors"
+            >
+              <Crown className="w-3 h-3 text-amber-400" />
+              <span>VIP প্যাকেজ কিনুন</span>
+            </button>
+            <span className="hidden sm:inline text-neutral-700">|</span>
+            <button
+              onClick={() => {
+                if (authSession?.role === "admin") {
+                  setShowAdminPanel(true);
+                } else {
+                  handleLock();
+                }
+              }}
+              className="text-neutral-400 hover:text-red-400 flex items-center gap-1 transition-colors"
+            >
+              <Shield className="w-3 h-3 text-red-500" />
+              <span>{authSession?.role === "admin" ? "এডমিন প্যানেল (Admin Panel)" : "এডমিন লগইন"}</span>
+            </button>
           </div>
 
           <p className="text-[10px] text-neutral-600 font-mono mt-4">
@@ -750,6 +824,21 @@ export default function App() {
               </div>
             </motion.div>
           </div>
+        )}
+        {/* Admin Management Panel */}
+        {showAdminPanel && (
+          <AdminPanel
+            onClose={() => setShowAdminPanel(false)}
+            lang={lang}
+          />
+        )}
+        {/* VIP Packages Modal */}
+        {showVipModal && (
+          <VipPackagesModal
+            isOpen={showVipModal}
+            onClose={() => setShowVipModal(false)}
+            lang={lang}
+          />
         )}
       </AnimatePresence>
     </div>

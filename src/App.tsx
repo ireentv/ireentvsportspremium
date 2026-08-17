@@ -304,6 +304,10 @@ export default function App() {
               lang={lang}
               t={t}
               isEmbed={true}
+              onClose={() => {
+                setIsEmbed(false);
+                window.history.pushState({}, "", window.location.pathname);
+              }}
             />
           </div>
         )}

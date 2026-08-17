@@ -396,32 +396,59 @@ export default function VideoPlayer({ channel, lang, t, isEmbed = false, onClose
           muted={isMuted}
         />
 
-        {/* Top Header Bar Overlay: Badges + Top-Right Close Button */}
-        <div className={`absolute top-0 inset-x-0 p-3 sm:p-4 z-20 flex items-center justify-between transition-all duration-300 pointer-events-none ${
+        {/* Top Header Bar Overlay: Badges + Channel Title + Top-Right Close Button */}
+        <div className={`absolute top-0 inset-x-0 p-3 sm:p-4 z-20 flex items-center justify-between gap-2 transition-all duration-300 pointer-events-none ${
           showControls ? "opacity-100 translate-y-0" : "opacity-0 -translate-y-3"
         }`}>
-          {/* Playback Mode Floating HUD Badge Overlay */}
-          <div className="flex items-center gap-2 pointer-events-auto">
-            <span className="px-2.5 py-1 rounded-md text-[10px] font-bold tracking-wider uppercase font-sans flex items-center gap-1.5 backdrop-blur-md shadow-md bg-neutral-900/90 text-neutral-200 border border-neutral-800">
+          {/* Channel details & Playback Badge */}
+          <div className="flex items-center gap-2 sm:gap-3 pointer-events-auto min-w-0">
+            {channel?.logo ? (
+              <img 
+                src={channel.logo} 
+                alt={channel.name} 
+                referrerPolicy="no-referrer"
+                onError={(e) => {
+                  e.currentTarget.style.display = "none";
+                }}
+                className="w-7 h-7 sm:w-8 sm:h-8 object-contain rounded-lg bg-black/60 border border-white/10 p-0.5 backdrop-blur-md shrink-0"
+              />
+            ) : null}
+
+            <div className="flex flex-col min-w-0">
+              <div className="flex items-center gap-2">
+                <h2 className="text-xs sm:text-sm font-bold text-white truncate drop-shadow-md font-sans">
+                  {channel?.name || "Live TV"}
+                </h2>
+                <span className="px-1.5 py-0.5 bg-red-600/90 text-[9px] font-mono rounded font-bold uppercase tracking-wider text-white shrink-0">
+                  LIVE
+                </span>
+              </div>
+            </div>
+          </div>
+
+          {/* Right Action Buttons */}
+          <div className="flex items-center gap-2 pointer-events-auto shrink-0">
+            {/* Direct Playback badge for desktop */}
+            <span className="hidden sm:flex px-2.5 py-1 rounded-md text-[10px] font-bold tracking-wider uppercase font-sans items-center gap-1.5 backdrop-blur-md shadow-md bg-neutral-900/90 text-neutral-200 border border-neutral-800">
               <span className="w-1.5 h-1.5 rounded-full bg-green-400 animate-ping" />
               {lang === "bn" ? "ডাইরেক্ট প্লেব্যাক" : "DIRECT PLAYBACK"}
             </span>
-          </div>
 
-          {/* Close Player Cross Button */}
-          {onClose && (
-            <button
-              type="button"
-              onClick={(e) => {
-                e.stopPropagation();
-                onClose();
-              }}
-              title={lang === "bn" ? "প্লেয়ার বন্ধ করুন" : "Close Player"}
-              className="pointer-events-auto w-8 h-8 sm:w-9 sm:h-9 rounded-full bg-neutral-900/90 hover:bg-red-600 border border-white/20 hover:border-red-500 text-neutral-300 hover:text-white flex items-center justify-center transition-all duration-200 shadow-xl backdrop-blur-md active:scale-90 cursor-pointer"
-            >
-              <X className="w-4 h-4 sm:w-5 sm:h-5 stroke-[2.5]" />
-            </button>
-          )}
+            {/* Close Player Cross Button */}
+            {onClose && (
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onClose();
+                }}
+                title={lang === "bn" ? "প্লেয়ার বন্ধ করুন" : "Close Player"}
+                className="w-8 h-8 sm:w-9 sm:h-9 rounded-full bg-neutral-900/90 hover:bg-red-600 border border-white/20 hover:border-red-500 text-neutral-300 hover:text-white flex items-center justify-center transition-all duration-200 shadow-xl backdrop-blur-md active:scale-90 cursor-pointer"
+              >
+                <X className="w-4 h-4 sm:w-5 sm:h-5 stroke-[2.5]" />
+              </button>
+            )}
+          </div>
         </div>
 
         {/* Ambient background glow if logo is present */}

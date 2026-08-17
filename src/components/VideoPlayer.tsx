@@ -3,7 +3,7 @@ import Hls from "hls.js";
 import { 
   Play, Pause, Volume2, VolumeX, Maximize, RotateCw, 
   Settings, Activity, AlertTriangle, Monitor, Sliders, Check, HelpCircle,
-  Share2, Link, Copy
+  Share2, Link, Copy, X
 } from "lucide-react";
 import { Channel, Language, Translations } from "../types";
 
@@ -12,9 +12,10 @@ interface VideoPlayerProps {
   lang: Language;
   t: Translations;
   isEmbed?: boolean;
+  onClose?: () => void;
 }
 
-export default function VideoPlayer({ channel, lang, t, isEmbed = false }: VideoPlayerProps) {
+export default function VideoPlayer({ channel, lang, t, isEmbed = false, onClose }: VideoPlayerProps) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const hlsRef = useRef<Hls | null>(null);
@@ -35,7 +36,8 @@ export default function VideoPlayer({ channel, lang, t, isEmbed = false }: Video
     }
     controlsTimeoutRef.current = setTimeout(() => {
       setShowControls(false);
-    }, 3000);
+      setShowAspectMenu(false);
+    }, 3500);
   };
 
   useEffect(() => {
@@ -51,8 +53,23 @@ export default function VideoPlayer({ channel, lang, t, isEmbed = false }: Video
     resetControlsTimeout();
   };
 
-  const handleTouchStart = () => {
-    resetControlsTimeout();
+  // Toggle controls on player tap / click without toggling play/pause
+  const handlePlayerTap = (e: React.MouseEvent | React.TouchEvent) => {
+    const target = e.target as HTMLElement;
+    // Do not toggle controls if clicking directly on buttons or inputs
+    if (target.closest("button") || target.closest("input") || target.closest("a") || target.closest("[role='button']")) {
+      return;
+    }
+
+    if (showControls) {
+      if (controlsTimeoutRef.current) {
+        clearTimeout(controlsTimeoutRef.current);
+      }
+      setShowControls(false);
+      setShowAspectMenu(false);
+    } else {
+      resetControlsTimeout();
+    }
   };
 
   const handleMouseLeave = () => {
@@ -60,6 +77,7 @@ export default function VideoPlayer({ channel, lang, t, isEmbed = false }: Video
       clearTimeout(controlsTimeoutRef.current);
     }
     setShowControls(false);
+    setShowAspectMenu(false);
   };
 
 
@@ -364,29 +382,46 @@ export default function VideoPlayer({ channel, lang, t, isEmbed = false }: Video
       <div 
         ref={containerRef} 
         onMouseMove={handleMouseMove}
-        onTouchStart={handleTouchStart}
+        onClick={handlePlayerTap}
         onMouseLeave={handleMouseLeave}
         className={`relative w-full overflow-hidden bg-black flex items-center justify-center transition-all ${
           isEmbed ? "h-full flex-1" : (isTheater ? "h-[70vh]" : "aspect-video")
         } ${showControls ? "cursor-default" : "cursor-none"}`}
       >
-        {/* Actual Video Tag */}
+        {/* Actual Video Tag - tapping does NOT pause video */}
         <video
           ref={videoRef}
           className={`w-full max-h-full ${getAspectClass()}`}
           playsInline
           muted={isMuted}
-          onClick={handlePlayPause}
         />
 
-        {/* Playback Mode Floating HUD Badge Overlay */}
-        <div className={`absolute top-4 left-4 z-20 flex flex-wrap gap-2 pointer-events-none transition-all duration-300 ${
-          showControls ? "opacity-100 translate-y-0" : "opacity-0 -translate-y-2"
+        {/* Top Header Bar Overlay: Badges + Top-Right Close Button */}
+        <div className={`absolute top-0 inset-x-0 p-3 sm:p-4 z-20 flex items-center justify-between transition-all duration-300 pointer-events-none ${
+          showControls ? "opacity-100 translate-y-0" : "opacity-0 -translate-y-3"
         }`}>
-          <span className="px-2.5 py-1 rounded-md text-[10px] font-bold tracking-wider uppercase font-sans flex items-center gap-1.5 backdrop-blur-md shadow-md bg-neutral-900/90 text-neutral-200 border border-neutral-800">
-            <span className="w-1.5 h-1.5 rounded-full bg-green-400 animate-ping" />
-            {lang === "bn" ? "ডাইরেক্ট প্লেব্যাক" : "DIRECT PLAYBACK"}
-          </span>
+          {/* Playback Mode Floating HUD Badge Overlay */}
+          <div className="flex items-center gap-2 pointer-events-auto">
+            <span className="px-2.5 py-1 rounded-md text-[10px] font-bold tracking-wider uppercase font-sans flex items-center gap-1.5 backdrop-blur-md shadow-md bg-neutral-900/90 text-neutral-200 border border-neutral-800">
+              <span className="w-1.5 h-1.5 rounded-full bg-green-400 animate-ping" />
+              {lang === "bn" ? "ডাইরেক্ট প্লেব্যাক" : "DIRECT PLAYBACK"}
+            </span>
+          </div>
+
+          {/* Close Player Cross Button */}
+          {onClose && (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                onClose();
+              }}
+              title={lang === "bn" ? "প্লেয়ার বন্ধ করুন" : "Close Player"}
+              className="pointer-events-auto w-8 h-8 sm:w-9 sm:h-9 rounded-full bg-neutral-900/90 hover:bg-red-600 border border-white/20 hover:border-red-500 text-neutral-300 hover:text-white flex items-center justify-center transition-all duration-200 shadow-xl backdrop-blur-md active:scale-90 cursor-pointer"
+            >
+              <X className="w-4 h-4 sm:w-5 sm:h-5 stroke-[2.5]" />
+            </button>
+          )}
         </div>
 
         {/* Ambient background glow if logo is present */}

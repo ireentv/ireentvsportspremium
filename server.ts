@@ -23,25 +23,78 @@ app.use((req, res, next) => {
   next();
 });
 
-// JSON API proxy to get the Live Sports playlist
-app.get("/api/playlist", async (req, res) => {
-  try {
-    const playlistUrl = "https://raw.githubusercontent.com/ireentv/IreenTv-Auto-Update-Json-M3u-Playlist/refs/heads/main/Live_Sports.json";
-    
-    const response = await fetch(playlistUrl, {
+// In-memory cache for the playlist to avoid hitting rate limits and speed up client loading
+let cachedPlaylist: any = null;
+let lastCacheTime = 0;
+const CACHE_TTL_MS = 10 * 60 * 1000; // 10 minutes cache
+
+async function fetchPlaylistFromRemote(): Promise<any> {
+  const sources = [
+    {
+      url: "https://api.github.com/repos/ireentv/IreenTv-Auto-Update-Json-M3u-Playlist/contents/Live_Sports.json",
+      headers: {
+        "User-Agent": "IreenTV-Live-Stream-App/1.0",
+        "Accept": "application/vnd.github.v3.raw",
+      }
+    },
+    {
+      url: "https://raw.githubusercontent.com/ireentv/IreenTv-Auto-Update-Json-M3u-Playlist/refs/heads/main/Live_Sports.json",
       headers: {
         "User-Agent": PROXY_HEADERS["User-Agent"],
-      },
-    });
-
-    if (!response.ok) {
-      throw new Error(`Failed to fetch playlist from GitHub. Status: ${response.status}`);
+      }
+    },
+    {
+      url: "https://raw.githubusercontent.com/ireentv/IreenTv-Auto-Update-Json-M3u-Playlist/main/Live_Sports.json",
+      headers: {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+      }
     }
+  ];
 
-    const data = await response.json();
+  let lastError = null;
+  for (const source of sources) {
+    try {
+      const response = await fetch(source.url, { headers: source.headers });
+      if (response.ok) {
+        const text = await response.text();
+        if (text && text.trim().startsWith("{")) {
+          const data = JSON.parse(text);
+          if (data && Array.isArray(data.channels) && data.channels.length > 0) {
+            return data;
+          }
+        }
+      } else {
+        lastError = new Error(`Source ${source.url} returned status ${response.status}`);
+      }
+    } catch (err: any) {
+      lastError = err;
+    }
+  }
+
+  throw lastError || new Error("Failed to fetch playlist from all sources");
+}
+
+// JSON API proxy to get the Live Sports playlist with caching
+app.get("/api/playlist", async (req, res) => {
+  const now = Date.now();
+  const forceRefresh = req.query.refresh === "true";
+
+  // Return cached version if still fresh
+  if (!forceRefresh && cachedPlaylist && (now - lastCacheTime < CACHE_TTL_MS)) {
+    return res.json(cachedPlaylist);
+  }
+
+  try {
+    const data = await fetchPlaylistFromRemote();
+    cachedPlaylist = data;
+    lastCacheTime = Date.now();
     res.json(data);
   } catch (error: any) {
     console.error("Error fetching playlist:", error.message);
+    if (cachedPlaylist) {
+      console.warn("Serving stale cached playlist due to fetch error");
+      return res.json(cachedPlaylist);
+    }
     res.status(500).json({ error: "Failed to load playlist", details: error.message });
   }
 });

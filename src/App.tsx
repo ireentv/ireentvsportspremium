@@ -1,13 +1,15 @@
 import React, { useEffect, useState, useMemo } from "react";
 import { 
   Search, Tv, Globe, Languages, X, ExternalLink, Info, 
-  Sparkles, Heart, ListFilter, Send, Share2, Star, Check, AlertCircle, RefreshCw, ArrowLeft
+  Sparkles, Heart, ListFilter, Send, Share2, Star, Check, AlertCircle, RefreshCw, ArrowLeft,
+  Lock, KeyRound
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { Channel, PlaylistData, Language } from "./types";
 import { translations } from "./translations";
 import VideoPlayer from "./components/VideoPlayer";
 import ChannelCard from "./components/ChannelCard";
+import LockScreen from "./components/LockScreen";
 
 export default function App() {
   const [playlist, setPlaylist] = useState<PlaylistData | null>(null);
@@ -24,6 +26,40 @@ export default function App() {
   const [showCreditsModal, setShowCreditsModal] = useState<boolean>(false);
   const [isEmbed, setIsEmbed] = useState<boolean>(false);
 
+  // Authentication State for direct website visits
+  const [isUnlocked, setIsUnlocked] = useState<boolean>(() => {
+    try {
+      return sessionStorage.getItem("ireentv_unlocked") === "true" ||
+             localStorage.getItem("ireentv_unlocked") === "true";
+    } catch {
+      return false;
+    }
+  });
+
+  const handleUnlock = () => {
+    setIsUnlocked(true);
+    try {
+      sessionStorage.setItem("ireentv_unlocked", "true");
+      localStorage.setItem("ireentv_unlocked", "true");
+    } catch (e) {
+      console.error("Failed to save unlock state", e);
+    }
+    // Instantly trigger playlist loading if not already loaded
+    if (!playlist) {
+      fetchPlaylist();
+    }
+  };
+
+  const handleLock = () => {
+    setIsUnlocked(false);
+    try {
+      sessionStorage.removeItem("ireentv_unlocked");
+      localStorage.removeItem("ireentv_unlocked");
+    } catch (e) {
+      console.error("Failed to remove unlock state", e);
+    }
+  };
+
   // Check for embed mode on mount
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -33,7 +69,7 @@ export default function App() {
   // Load translations
   const t = translations[lang];
 
-  // Load favorites & language from localStorage on mount
+  // Load cached playlist from localStorage for instant offline/speedy rendering
   useEffect(() => {
     try {
       const savedFavorites = localStorage.getItem("ireentv_favorites");
@@ -47,46 +83,93 @@ export default function App() {
       } else {
         setLang("en"); // Enforce English
       }
+
+      const cachedRaw = localStorage.getItem("ireentv_cached_playlist");
+      if (cachedRaw) {
+        const parsed = JSON.parse(cachedRaw);
+        if (parsed && parsed.channels && parsed.channels.length > 0) {
+          setPlaylist(parsed);
+        }
+      }
     } catch (e) {
       console.error("Failed to load local storage preferences", e);
     }
   }, []);
 
-  // Fetch playlist data from Express API with direct GitHub raw fallback
+  // Fetch playlist data from Express API with direct GitHub raw & API fallbacks
   const fetchPlaylist = async () => {
-    setLoading(true);
+    setLoading((prev) => (!playlist ? true : prev));
     setFetchError(null);
     try {
-      let data: PlaylistData;
+      let data: PlaylistData | null = null;
+      
+      // Tier 1: Local server cached API
       try {
         const res = await fetch("/api/playlist");
-        if (!res.ok) {
-          throw new Error(`Server returned status: ${res.status}`);
+        if (res.ok) {
+          const contentType = res.headers.get("content-type") || "";
+          if (!contentType.includes("text/html") && !contentType.includes("application/xml") && !contentType.includes("text/xml")) {
+            const json = await res.json();
+            if (json && json.channels && json.channels.length > 0) {
+              data = json;
+            }
+          }
         }
-        const contentType = res.headers.get("content-type") || "";
-        if (contentType.includes("text/html") || contentType.includes("application/xml") || contentType.includes("text/xml")) {
-          throw new Error("Received HTML/XML instead of JSON (likely static router fallback)");
-        }
-        data = await res.json();
       } catch (err: any) {
-        console.warn("Express API failed, attempting direct GitHub raw fallback:", err);
-        const fallbackUrl = "https://raw.githubusercontent.com/ireentv/IreenTv-Auto-Update-Json-M3u-Playlist/refs/heads/main/Live_Sports.json";
-        const res = await fetch(fallbackUrl);
-        if (!res.ok) {
-          throw new Error(`Direct GitHub fetch failed with status: ${res.status}`);
+        console.warn("Express API failed, trying direct fallbacks:", err);
+      }
+
+      // Tier 2: Direct GitHub API with raw accept header
+      if (!data) {
+        try {
+          const res = await fetch("https://api.github.com/repos/ireentv/IreenTv-Auto-Update-Json-M3u-Playlist/contents/Live_Sports.json", {
+            headers: {
+              "User-Agent": "IreenTV-Live-Stream-App/1.0",
+              "Accept": "application/vnd.github.v3.raw"
+            }
+          });
+          if (res.ok) {
+            const json = await res.json();
+            if (json && json.channels && json.channels.length > 0) {
+              data = json;
+            }
+          }
+        } catch (err: any) {
+          console.warn("GitHub API fallback failed:", err);
         }
-        data = await res.json();
+      }
+
+      // Tier 3: Direct Raw GitHub endpoint
+      if (!data) {
+        try {
+          const fallbackUrl = "https://raw.githubusercontent.com/ireentv/IreenTv-Auto-Update-Json-M3u-Playlist/refs/heads/main/Live_Sports.json";
+          const res = await fetch(fallbackUrl);
+          if (res.ok) {
+            const json = await res.json();
+            if (json && json.channels && json.channels.length > 0) {
+              data = json;
+            }
+          }
+        } catch (err: any) {
+          console.warn("Direct Raw GitHub fetch failed:", err);
+        }
       }
       
       if (data && data.channels && data.channels.length > 0) {
         setPlaylist(data);
-        // All channels on home page by default on open, no auto-play first channel
-      } else {
-        throw new Error("No channels found in the playlist.");
+        try {
+          localStorage.setItem("ireentv_cached_playlist", JSON.stringify(data));
+        } catch (e) {
+          console.warn("Could not save playlist to local storage", e);
+        }
+      } else if (!playlist) {
+        throw new Error("No channels found in the playlist. Please retry.");
       }
     } catch (err: any) {
       console.error("Error loading playlist:", err);
-      setFetchError(err.message || "Could not fetch playlist. Please check your connection.");
+      if (!playlist) {
+        setFetchError(err.message || "Could not fetch playlist. Please check your connection.");
+      }
     } finally {
       setLoading(false);
     }
@@ -173,12 +256,16 @@ export default function App() {
           setActiveChannel(found);
           // Auto scroll to player
           document.getElementById("tv-player-card")?.scrollIntoView({ behavior: "smooth" });
+        } else if (params.get("embed") === "true") {
+          setActiveChannel(playlist.channels[0]);
         }
+      } else if (params.get("embed") === "true") {
+        setActiveChannel(playlist.channels[0]);
       }
     }
   }, [playlist]);
 
-  // If in embed/single-channel mode, render ONLY the video player
+  // If in embed/single-channel mode, render ONLY the video player without lock screen
   if (isEmbed) {
     return (
       <div className="fixed inset-0 w-screen h-screen bg-[#050505] text-neutral-100 flex flex-col items-center justify-center font-sans overflow-hidden select-none">
@@ -230,6 +317,16 @@ export default function App() {
           </div>
         )}
       </div>
+    );
+  }
+
+  // If visiting directly and not unlocked yet, render Lock Screen
+  if (!isUnlocked) {
+    return (
+      <LockScreen 
+        onUnlock={handleUnlock}
+        lang={lang}
+      />
     );
   }
 
@@ -296,20 +393,32 @@ export default function App() {
             </button>
           </div>
 
-          {/* Quick Playlist Metadata or Info Ticker */}
-          {playlist && (
-            <div className="hidden lg:flex items-center gap-6 bg-[#050505]/60 px-4 py-1.5 rounded-full border border-neutral-800/60 text-xs text-neutral-400 font-sans">
-              <div className="flex items-center gap-1.5">
-                <span className="w-1.5 h-1.5 bg-red-600 rounded-full"></span>
-                <span>{t.channelsCount}: <strong className="text-white font-mono">{playlist.channels_amount || playlist.channels.length}</strong></span>
+          {/* Quick Playlist Metadata or Info Ticker + Lock Button */}
+          <div className="flex items-center gap-3">
+            {playlist && (
+              <div className="hidden lg:flex items-center gap-6 bg-[#050505]/60 px-4 py-1.5 rounded-full border border-neutral-800/60 text-xs text-neutral-400 font-sans">
+                <div className="flex items-center gap-1.5">
+                  <span className="w-1.5 h-1.5 bg-red-600 rounded-full"></span>
+                  <span>{t.channelsCount}: <strong className="text-white font-mono">{playlist.channels_amount || playlist.channels.length}</strong></span>
+                </div>
+                <div className="h-3 w-px bg-neutral-800" />
+                <div className="flex items-center gap-1.5">
+                  <Globe className="w-3.5 h-3.5 text-neutral-500" />
+                  <span>{t.lastUpdate}: <strong className="text-white font-mono">{playlist.Last_update || "Just Now"}</strong></span>
+                </div>
               </div>
-              <div className="h-3 w-px bg-neutral-800" />
-              <div className="flex items-center gap-1.5">
-                <Globe className="w-3.5 h-3.5 text-neutral-500" />
-                <span>{t.lastUpdate}: <strong className="text-white font-mono">{playlist.Last_update || "Just Now"}</strong></span>
-              </div>
-            </div>
-          )}
+            )}
+
+            {/* Quick Lock Button */}
+            <button
+              onClick={handleLock}
+              title={lang === "bn" ? "সাইটটি লক করুন" : "Lock Site"}
+              className="px-3 py-1.5 bg-neutral-900 hover:bg-red-950/40 border border-neutral-800 hover:border-red-900/50 rounded-xl text-neutral-400 hover:text-red-400 text-xs font-bold transition-all flex items-center gap-1.5 active:scale-95 shadow-sm"
+            >
+              <Lock className="w-3.5 h-3.5 text-red-500" />
+              <span className="hidden sm:inline">{lang === "bn" ? "লক করুন" : "Lock"}</span>
+            </button>
+          </div>
 
 
         </div>
@@ -486,6 +595,10 @@ export default function App() {
                     channel={activeChannel}
                     lang={lang}
                     t={t}
+                    onClose={() => {
+                      setActiveChannel(null);
+                      window.history.pushState({}, "", window.location.pathname);
+                    }}
                   />
                 </div>
 

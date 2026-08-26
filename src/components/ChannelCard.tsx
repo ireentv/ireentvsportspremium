@@ -2,6 +2,7 @@ import React from "react";
 import { Star, Play, Tv } from "lucide-react";
 import { motion } from "motion/react";
 import { Channel } from "../types";
+import { getChannelLogo } from "../customLogos";
 
 interface ChannelCardProps {
   channel: Channel;
@@ -13,6 +14,7 @@ interface ChannelCardProps {
 
 export default function ChannelCard({ channel, isActive, isFavorite, onSelect, onToggleFavorite }: ChannelCardProps) {
   const [imgError, setImgError] = React.useState<boolean>(false);
+  const logoUrl = getChannelLogo(channel.name, channel.logo);
 
   return (
     <motion.div
@@ -38,9 +40,9 @@ export default function ChannelCard({ channel, isActive, isFavorite, onSelect, o
       {/* Top row: Logo and Star Favorite toggle */}
       <div className="flex items-start justify-between gap-2 z-10">
         <div className="w-14 h-14 bg-neutral-950 border border-neutral-800 rounded-lg p-1.5 flex items-center justify-center overflow-hidden bg-white/5 relative shadow-inner">
-          {channel.logo && !imgError ? (
+          {logoUrl && !imgError ? (
             <img 
-              src={channel.logo} 
+              src={logoUrl} 
               alt={channel.name}
               referrerPolicy="no-referrer"
               onError={() => setImgError(true)}

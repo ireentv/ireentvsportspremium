@@ -43,23 +43,69 @@ async function run() {
     process.exit(1);
   }
 
-  let m3u = `#EXTM3U x-tvg-url="https://raw.githubusercontent.com/ireentv/IreenTv-Auto-Update-Json-M3u-Playlist/main/epg.xml"\n\n`;
-
-  for (const ch of channels) {
-    const slug = cleanSlug(ch.name);
-    const logo = ch.logo || "";
-    const group = ch.group || "Sports";
-    const channelName = ch.name.trim();
-    const channelStreamUrl = `${BASE_URL.replace(/\/$/, "")}/${slug}.m3u8`;
-
-    m3u += `#EXTINF:-1 tvg-id="${slug}" tvg-name="${channelName}" tvg-logo="${logo}" group-title="${group}",${channelName}\n`;
-    m3u += `${channelStreamUrl}\n\n`;
+  // Load custom logos if available
+  let customLogos = {};
+  try {
+    const customLogosPath = path.join(process.cwd(), "custom_logos.json");
+    if (fs.existsSync(customLogosPath)) {
+      customLogos = JSON.parse(fs.readFileSync(customLogosPath, "utf-8"));
+    }
+  } catch (e) {
+    console.warn("Could not read custom_logos.json:", e.message);
   }
 
   // Ensure directories exist
   const publicDir = path.join(process.cwd(), "public");
+  const logosDir = path.join(publicDir, "logos");
   if (!fs.existsSync(publicDir)) {
     fs.mkdirSync(publicDir, { recursive: true });
+  }
+  if (!fs.existsSync(logosDir)) {
+    fs.mkdirSync(logosDir, { recursive: true });
+  }
+
+  const lastUpdate = new Date().toUTCString();
+  const channelsCount = channels.length;
+
+  let m3u = `#EXTM3U x-tvg-url="https://raw.githubusercontent.com/ireentv/IreenTv-Auto-Update-Json-M3u-Playlist/main/epg.xml"\n`;
+  m3u += `# Playlist Name: Ireen TV Sports Premium\n`;
+  m3u += `# Telegram: https://t.me/ireentv\n`;
+  m3u += `# Website: https://anamul.pages.dev\n`;
+  m3u += `# Developer: MD ANAMUL HOQUE\n`;
+  m3u += `# Version: 1.0\n`;
+  m3u += `# Channels Amount: ${channelsCount}\n`;
+  m3u += `# Last Update: ${lastUpdate}\n\n`;
+
+  for (const ch of channels) {
+    const slug = cleanSlug(ch.name);
+    const channelName = ch.name.trim();
+    const group = ch.group || "Sports";
+    const channelStreamUrl = `${BASE_URL.replace(/\/$/, "")}/${slug}.m3u8`;
+
+    // 1. Check if user placed a local logo in public/logos/{slug}.png or .jpg
+    let resolvedLogo = "";
+    const localPng = path.join(logosDir, `${slug}.png`);
+    const localJpg = path.join(logosDir, `${slug}.jpg`);
+    const localSvg = path.join(logosDir, `${slug}.svg`);
+
+    if (fs.existsSync(localPng)) {
+      resolvedLogo = `${BASE_URL.replace(/\/$/, "")}/logos/${slug}.png`;
+    } else if (fs.existsSync(localJpg)) {
+      resolvedLogo = `${BASE_URL.replace(/\/$/, "")}/logos/${slug}.jpg`;
+    } else if (fs.existsSync(localSvg)) {
+      resolvedLogo = `${BASE_URL.replace(/\/$/, "")}/logos/${slug}.svg`;
+    } else if (customLogos[channelName]) {
+      // 2. Check custom_logos.json
+      resolvedLogo = customLogos[channelName];
+    } else if (customLogos[slug]) {
+      resolvedLogo = customLogos[slug];
+    } else {
+      // 3. Fallback to channel's upstream logo
+      resolvedLogo = ch.logo || "";
+    }
+
+    m3u += `#EXTINF:-1 tvg-id="${slug}" tvg-name="${channelName}" tvg-logo="${resolvedLogo}" group-title="${group}",${channelName}\n`;
+    m3u += `${channelStreamUrl}\n\n`;
   }
 
   // Write files

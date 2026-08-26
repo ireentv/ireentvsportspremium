@@ -1,5 +1,6 @@
 import express from "express";
 import path from "path";
+import fs from "fs";
 import { createServer as createViteServer } from "vite";
 import dotenv from "dotenv";
 
@@ -113,14 +114,33 @@ app.get(["/playlist.m3u", "/playlist.m3u8"], async (req, res) => {
     const protocol = req.protocol || "https";
     const baseUrl = `${protocol}://${host}`;
 
-    let m3u = `#EXTM3U x-tvg-url="https://raw.githubusercontent.com/ireentv/IreenTv-Auto-Update-Json-M3u-Playlist/main/epg.xml"\n\n`;
+    let customLogos: Record<string, string> = {};
+    try {
+      const logosPath = path.join(process.cwd(), "custom_logos.json");
+      if (fs.existsSync(logosPath)) {
+        customLogos = JSON.parse(fs.readFileSync(logosPath, "utf-8"));
+      }
+    } catch (e) {}
+
+    const lastUpdate = new Date().toUTCString();
+    const channelsCount = channels.length;
+
+    let m3u = `#EXTM3U x-tvg-url="https://raw.githubusercontent.com/ireentv/IreenTv-Auto-Update-Json-M3u-Playlist/main/epg.xml"\n`;
+    m3u += `# Playlist Name: Ireen TV Sports Premium\n`;
+    m3u += `# Telegram: https://t.me/ireentv\n`;
+    m3u += `# Website: https://anamul.pages.dev\n`;
+    m3u += `# Developer: MD ANAMUL HOQUE\n`;
+    m3u += `# Version: 1.0\n`;
+    m3u += `# Channels Amount: ${channelsCount}\n`;
+    m3u += `# Last Update: ${lastUpdate}\n\n`;
 
     for (const ch of channels) {
       const slug = cleanSlugName(ch.name);
-      const logo = ch.logo || "";
-      const group = ch.group || "Sports";
       const channelName = ch.name.trim();
+      const group = ch.group || "Sports";
       const channelStreamUrl = `${baseUrl}/${slug}.m3u8`;
+
+      let logo = customLogos[channelName] || customLogos[slug] || ch.logo || "";
 
       m3u += `#EXTINF:-1 tvg-id="${slug}" tvg-name="${channelName}" tvg-logo="${logo}" group-title="${group}",${channelName}\n`;
       m3u += `${channelStreamUrl}\n\n`;

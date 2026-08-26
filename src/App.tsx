@@ -2,7 +2,7 @@ import React, { useEffect, useState, useMemo } from "react";
 import { 
   Search, Tv, Globe, Languages, X, ExternalLink, Info, 
   Sparkles, Heart, ListFilter, Send, Share2, Star, Check, AlertCircle, RefreshCw, ArrowLeft,
-  Lock, KeyRound
+  Lock, KeyRound, ListVideo, Copy
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { Channel, PlaylistData, Language } from "./types";
@@ -19,12 +19,44 @@ export default function App() {
   // UI States
   const [searchQuery, setSearchQuery] = useState<string>("");
   const [activeCategory, setActiveCategory] = useState<string>("all");
-  const [activeChannel, setActiveChannel] = useState<Channel | null>(null);
   const [lang, setLang] = useState<Language>("en"); // English default as requested
   const [favorites, setFavorites] = useState<string[]>([]);
   const [shareCopied, setShareCopied] = useState<boolean>(false);
   const [showCreditsModal, setShowCreditsModal] = useState<boolean>(false);
-  const [isEmbed, setIsEmbed] = useState<boolean>(false);
+  const [showM3uModal, setShowM3uModal] = useState<boolean>(false);
+  const [copiedM3u, setCopiedM3u] = useState<string | null>(null);
+
+  // Synchronous check for embed mode directly on initialization (before any render)
+  const [isEmbed, setIsEmbed] = useState<boolean>(() => {
+    try {
+      if (typeof window !== "undefined") {
+        const params = new URLSearchParams(window.location.search);
+        return params.get("embed") === "true";
+      }
+    } catch (e) {
+      console.error(e);
+    }
+    return false;
+  });
+
+  // Initial channel from URL params if present (allows instant playback in embed mode)
+  const [activeChannel, setActiveChannel] = useState<Channel | null>(() => {
+    try {
+      if (typeof window !== "undefined") {
+        const params = new URLSearchParams(window.location.search);
+        const name = params.get("channel");
+        const url = params.get("stream") || params.get("url");
+        const logo = params.get("logo") || "";
+        const group = params.get("group") || "Sports";
+        if (name && url) {
+          return { name, url, logo, group };
+        }
+      }
+    } catch (e) {
+      console.error(e);
+    }
+    return null;
+  });
 
   // Authentication State for direct website visits
   const [isUnlocked, setIsUnlocked] = useState<boolean>(() => {
@@ -59,12 +91,6 @@ export default function App() {
       console.error("Failed to remove unlock state", e);
     }
   };
-
-  // Check for embed mode on mount
-  useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    setIsEmbed(params.get("embed") === "true");
-  }, []);
 
   // Load translations
   const t = translations[lang];
@@ -231,10 +257,18 @@ export default function App() {
     });
   }, [playlist, activeCategory, searchQuery, favorites]);
 
-  // Handle Share Click (copies the current app's stream URL)
+  // Handle Share Click (copies the dedicated embed stream URL)
   const handleShare = () => {
     if (!activeChannel) return;
-    const shareUrl = `${window.location.origin}?channel=${encodeURIComponent(activeChannel.name)}&embed=true`;
+    const base = window.location.href.split("?")[0];
+    const params = new URLSearchParams();
+    params.set("channel", activeChannel.name);
+    if (activeChannel.url) params.set("stream", activeChannel.url);
+    if (activeChannel.logo) params.set("logo", activeChannel.logo);
+    if (activeChannel.group) params.set("group", activeChannel.group);
+    params.set("embed", "true");
+    
+    const shareUrl = `${base}?${params.toString()}`;
     navigator.clipboard.writeText(shareUrl)
       .then(() => {
         setShareCopied(true);
@@ -254,26 +288,20 @@ export default function App() {
         );
         if (found) {
           setActiveChannel(found);
-          // Auto scroll to player
-          document.getElementById("tv-player-card")?.scrollIntoView({ behavior: "smooth" });
-        } else if (params.get("embed") === "true") {
-          setActiveChannel(playlist.channels[0]);
+          if (!isEmbed) {
+            document.getElementById("tv-player-card")?.scrollIntoView({ behavior: "smooth" });
+          }
         }
-      } else if (params.get("embed") === "true") {
-        setActiveChannel(playlist.channels[0]);
       }
     }
-  }, [playlist]);
+  }, [playlist, isEmbed]);
 
-  // If in embed/single-channel mode, render ONLY the video player without lock screen
+  // If in embed/single-channel mode, render ONLY the dedicated video player without lock screen
   if (isEmbed) {
     return (
-      <div className="fixed inset-0 w-screen h-screen bg-[#050505] text-neutral-100 flex flex-col items-center justify-center font-sans overflow-hidden select-none">
-        {/* Background radial atmosphere for top-tier sports look */}
-        <div className="fixed top-0 left-0 w-full h-[600px] bg-gradient-to-b from-red-950/15 via-neutral-950/0 to-transparent pointer-events-none -z-10" />
-
-        {loading && (
-          <div className="flex flex-col items-center justify-center text-center">
+      <div className="fixed inset-0 w-screen h-screen bg-black text-neutral-100 flex flex-col items-center justify-center font-sans overflow-hidden select-none">
+        {loading && !activeChannel && (
+          <div className="flex flex-col items-center justify-center text-center p-4">
             <div className="relative w-12 h-12 mb-4 animate-pulse">
               <div className="absolute inset-0 border-4 border-red-600/20 rounded-full"></div>
               <div className="absolute inset-0 border-4 border-t-red-600 rounded-full animate-spin"></div>
@@ -284,7 +312,7 @@ export default function App() {
           </div>
         )}
 
-        {fetchError && (
+        {fetchError && !activeChannel && (
           <div className="flex flex-col items-center justify-center p-6 text-center max-w-sm">
             <AlertCircle className="w-10 h-10 text-red-500 mb-4 animate-bounce" />
             <p className="text-xs text-neutral-400 mb-4 font-mono">{fetchError}</p>
@@ -297,17 +325,13 @@ export default function App() {
           </div>
         )}
 
-        {!loading && !fetchError && activeChannel && (
+        {activeChannel && (
           <div className="w-full h-full flex flex-col">
             <VideoPlayer 
               channel={activeChannel}
               lang={lang}
               t={t}
               isEmbed={true}
-              onClose={() => {
-                setIsEmbed(false);
-                window.history.pushState({}, "", window.location.pathname);
-              }}
             />
           </div>
         )}
@@ -413,11 +437,21 @@ export default function App() {
               </div>
             )}
 
+            {/* M3U Playlist URL Button */}
+            <button
+              onClick={() => setShowM3uModal(true)}
+              title={lang === "bn" ? "M3U প্লেলিস্ট ও সরাসরি লিংক" : "M3U Playlist & Direct Stream Links"}
+              className="px-3 py-1.5 bg-neutral-900 hover:bg-yellow-950/30 border border-neutral-800 hover:border-yellow-600/40 rounded-xl text-neutral-300 hover:text-yellow-400 text-xs font-bold transition-all flex items-center gap-1.5 active:scale-95 shadow-sm cursor-pointer"
+            >
+              <ListVideo className="w-3.5 h-3.5 text-yellow-500" />
+              <span>M3U8</span>
+            </button>
+
             {/* Quick Lock Button */}
             <button
               onClick={handleLock}
               title={lang === "bn" ? "সাইটটি লক করুন" : "Lock Site"}
-              className="px-3 py-1.5 bg-neutral-900 hover:bg-red-950/40 border border-neutral-800 hover:border-red-900/50 rounded-xl text-neutral-400 hover:text-red-400 text-xs font-bold transition-all flex items-center gap-1.5 active:scale-95 shadow-sm"
+              className="px-3 py-1.5 bg-neutral-900 hover:bg-red-950/40 border border-neutral-800 hover:border-red-900/50 rounded-xl text-neutral-400 hover:text-red-400 text-xs font-bold transition-all flex items-center gap-1.5 active:scale-95 shadow-sm cursor-pointer"
             >
               <Lock className="w-3.5 h-3.5 text-red-500" />
               <span className="hidden sm:inline">{lang === "bn" ? "লক করুন" : "Lock"}</span>
@@ -817,6 +851,123 @@ export default function App() {
                 </div>
               </div>
             </motion.div>
+          </div>
+        )}
+
+        {/* Dynamic M3U Playlist & Direct Links Modal */}
+        {showM3uModal && (
+          <div 
+            className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md animate-fade-in"
+            onClick={() => setShowM3uModal(false)}
+          >
+            <div 
+              className="w-full max-w-lg bg-neutral-900 border border-neutral-750 rounded-2xl p-5 sm:p-6 shadow-2xl flex flex-col gap-5 text-neutral-100 font-sans"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex items-center justify-between border-b border-neutral-800 pb-3">
+                <div className="flex items-center gap-3">
+                  <div className="w-9 h-9 rounded-xl bg-yellow-500/10 border border-yellow-500/20 flex items-center justify-center text-yellow-500">
+                    <ListVideo className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h3 className="text-base font-bold text-white leading-tight">
+                      {lang === "bn" ? "M3U প্লেলিস্ট ও সরাসরি চ্যানেল লিংক" : "M3U Playlist & Direct Stream URLs"}
+                    </h3>
+                    <p className="text-xs text-neutral-400 font-mono">
+                      Cloudflare Pages & GitHub Sync
+                    </p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setShowM3uModal(false)}
+                  className="w-8 h-8 rounded-lg hover:bg-neutral-800 flex items-center justify-center text-neutral-400 hover:text-white transition-colors cursor-pointer"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              <div className="flex flex-col gap-4 max-h-[70vh] overflow-y-auto pr-1">
+                {/* Full M3U Playlist URL */}
+                <div className="p-3.5 bg-[#050505] border border-neutral-800 rounded-xl flex flex-col gap-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold text-white uppercase tracking-wider">
+                      {lang === "bn" ? "সম্পূর্ণ M3U প্লেলিস্ট লিংক" : "Full M3U Playlist URL"}
+                    </span>
+                    <span className="px-2 py-0.5 bg-yellow-500/10 text-yellow-400 border border-yellow-500/20 text-[10px] font-mono font-bold rounded">
+                      IPTV / TIVIMATE
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="text"
+                      readOnly
+                      value="https://ireentvsportspremium.pages.dev/playlist.m3u"
+                      className="flex-1 bg-neutral-900 border border-neutral-800 rounded-lg px-3 py-2 text-xs font-mono text-neutral-300 select-all outline-none"
+                    />
+                    <button
+                      onClick={() => {
+                        navigator.clipboard.writeText("https://ireentvsportspremium.pages.dev/playlist.m3u");
+                        setCopiedM3u("playlist");
+                        setTimeout(() => setCopiedM3u(null), 2500);
+                      }}
+                      className={`px-3 py-2 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-all shrink-0 cursor-pointer ${
+                        copiedM3u === "playlist"
+                          ? "bg-green-600 text-white"
+                          : "bg-yellow-600 hover:bg-yellow-500 text-white"
+                      }`}
+                    >
+                      {copiedM3u === "playlist" ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+                      {copiedM3u === "playlist" ? (lang === "bn" ? "কপি হয়েছে" : "Copied") : (lang === "bn" ? "কপি" : "Copy")}
+                    </button>
+                  </div>
+                  <p className="text-[11px] text-neutral-400">
+                    {lang === "bn"
+                      ? "এই লিংকটি আপনার যেকোনো IPTV প্লেয়ারে দিলে স্বয়ংক্রিয়ভাবে সব ৪০০+ চ্যানেল যুক্ত হয়ে যাবে।"
+                      : "Add this URL to any IPTV player (TiviMate, OTT Navigator, VLC) to load all live channels."}
+                  </p>
+                </div>
+
+                {/* Direct Channel Link Pattern */}
+                <div className="p-3.5 bg-[#050505] border border-neutral-800 rounded-xl flex flex-col gap-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold text-white uppercase tracking-wider">
+                      {lang === "bn" ? "যেকোনো চ্যানেলের সরাসরি .m3u8 ফরম্যাট" : "Individual Channel .m3u8 Pattern"}
+                    </span>
+                    <span className="px-2 py-0.5 bg-red-500/10 text-red-400 border border-red-500/20 text-[10px] font-mono font-bold rounded">
+                      DIRECT .m3u8
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="text"
+                      readOnly
+                      value="https://ireentvsportspremium.pages.dev/LaLigaTV.m3u8"
+                      className="flex-1 bg-neutral-900 border border-neutral-800 rounded-lg px-3 py-2 text-xs font-mono text-neutral-300 select-all outline-none"
+                    />
+                    <button
+                      onClick={() => {
+                        navigator.clipboard.writeText("https://ireentvsportspremium.pages.dev/LaLigaTV.m3u8");
+                        setCopiedM3u("channel");
+                        setTimeout(() => setCopiedM3u(null), 2500);
+                      }}
+                      className={`px-3 py-2 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-all shrink-0 cursor-pointer ${
+                        copiedM3u === "channel"
+                          ? "bg-green-600 text-white"
+                          : "bg-neutral-800 hover:bg-neutral-700 text-white border border-neutral-700"
+                      }`}
+                    >
+                      {copiedM3u === "channel" ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+                      {copiedM3u === "channel" ? (lang === "bn" ? "কপি হয়েছে" : "Copied") : (lang === "bn" ? "কপি" : "Copy")}
+                    </button>
+                  </div>
+                  <p className="text-[11px] text-neutral-400">
+                    {lang === "bn"
+                      ? "যেকোনো চ্যানেলের নামের সাথে .m3u8 যোগ করলেই (যেমন: /LaLigaTV.m3u8, /T_Sports.m3u8) সরাসরি লাইভ স্ট্রিম চলবে।"
+                      : "Access any live channel directly by appending .m3u8 to its name (e.g. /LaLigaTV.m3u8)."}
+                  </p>
+                </div>
+              </div>
+            </div>
           </div>
         )}
       </AnimatePresence>

@@ -74,6 +74,99 @@ async function fetchPlaylistFromRemote(): Promise<any> {
   throw lastError || new Error("Failed to fetch playlist from all sources");
 }
 
+function slugifyName(str: string): string {
+  if (!str) return "";
+  return str.trim().replace(/[^\w\s-]/g, "").replace(/[\s_]+/g, "").toLowerCase();
+}
+
+function cleanSlugName(name: string): string {
+  if (!name) return "";
+  return name.trim().replace(/\s+/g, "_").replace(/[^\w\-]/g, "");
+}
+
+function findMatchingChannelInList(channels: any[], query: string): any | null {
+  if (!channels || !query) return null;
+  const clean = query.replace(/\.m3u8?$/i, "").trim();
+  
+  // Exact match
+  const exact = channels.find(c => c.name.trim().toLowerCase() === clean.toLowerCase());
+  if (exact) return exact;
+
+  // Slug match
+  const qSlug = slugifyName(clean);
+  const slugMatch = channels.find(c => slugifyName(c.name) === qSlug);
+  if (slugMatch) return slugMatch;
+
+  // Partial match
+  const partial = channels.find(c => slugifyName(c.name).includes(qSlug) || qSlug.includes(slugifyName(c.name)));
+  if (partial) return partial;
+
+  return null;
+}
+
+// Full M3U / M3U8 Playlist Generator Endpoint
+app.get(["/playlist.m3u", "/playlist.m3u8"], async (req, res) => {
+  try {
+    const data = cachedPlaylist || await fetchPlaylistFromRemote();
+    const channels = data?.channels || [];
+    const host = req.get("host") || "ireentvsportspremium.pages.dev";
+    const protocol = req.protocol || "https";
+    const baseUrl = `${protocol}://${host}`;
+
+    let m3u = `#EXTM3U x-tvg-url="https://raw.githubusercontent.com/ireentv/IreenTv-Auto-Update-Json-M3u-Playlist/main/epg.xml"\n\n`;
+
+    for (const ch of channels) {
+      const slug = cleanSlugName(ch.name);
+      const logo = ch.logo || "";
+      const group = ch.group || "Sports";
+      const channelName = ch.name.trim();
+      const channelStreamUrl = `${baseUrl}/${slug}.m3u8`;
+
+      m3u += `#EXTINF:-1 tvg-id="${slug}" tvg-name="${channelName}" tvg-logo="${logo}" group-title="${group}",${channelName}\n`;
+      m3u += `${channelStreamUrl}\n\n`;
+    }
+
+    res.setHeader("Content-Type", "application/vnd.apple.mpegurl; charset=utf-8");
+    res.setHeader("Content-Disposition", 'inline; filename="ireentv_playlist.m3u"');
+    res.send(m3u);
+  } catch (error: any) {
+    res.status(500).send(`#EXTM3U\n# Error: ${error.message}`);
+  }
+});
+
+// Dynamic Channel M3U8 Handler (e.g. /LaLigaTV.m3u8 or /channel/LaLigaTV.m3u8)
+app.get(["/:channelName.m3u8", "/channel/:channelName.m3u8"], async (req, res) => {
+  const channelParam = req.params.channelName;
+  if (!channelParam) {
+    res.status(400).send("Missing channel name");
+    return;
+  }
+
+  try {
+    const data = cachedPlaylist || await fetchPlaylistFromRemote();
+    const channels = data?.channels || [];
+    const matched = findMatchingChannelInList(channels, channelParam);
+
+    if (!matched || !matched.url) {
+      res.status(404).send(`Channel "${channelParam}" not found in playlist.`);
+      return;
+    }
+
+    const mode = req.query.mode;
+    if (mode === "proxy") {
+      res.redirect(`/api/stream?url=${encodeURIComponent(matched.url)}`);
+      return;
+    }
+
+    // Direct 302 Found redirect to the live stream
+    res.setHeader("Access-Control-Allow-Origin", "*");
+    res.setHeader("Cache-Control", "public, max-age=60");
+    res.redirect(302, matched.url);
+  } catch (error: any) {
+    res.status(500).send(`Error resolving stream: ${error.message}`);
+  }
+});
+
 // JSON API proxy to get the Live Sports playlist with caching
 app.get("/api/playlist", async (req, res) => {
   const now = Date.now();

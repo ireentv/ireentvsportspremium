@@ -3,7 +3,7 @@ import Hls from "hls.js";
 import { 
   Play, Pause, Volume2, VolumeX, Maximize, RotateCw, 
   Settings, Activity, AlertTriangle, Monitor, Sliders, Check, HelpCircle,
-  Share2, Link, Copy, X
+  Share2, Link, Copy, X, Tv, Code, ListVideo, ExternalLink
 } from "lucide-react";
 import { Channel, Language, Translations } from "../types";
 
@@ -100,21 +100,53 @@ export default function VideoPlayer({ channel, lang, t, isEmbed = false, onClose
   const [aspectRatio, setAspectRatio] = useState<"16:9" | "4:3" | "fill" | "original">("16:9");
   const [showAspectMenu, setShowAspectMenu] = useState<boolean>(false);
 
-  // Share Menu States
-  const [copiedApp, setCopiedApp] = useState<boolean>(false);
+  // Share Modal States
+  const [showShareModal, setShowShareModal] = useState<boolean>(false);
+  const [copiedType, setCopiedType] = useState<string | null>(null);
 
-  const handleCopyAppShareLink = () => {
-    if (!channel) return;
-    const shareUrl = `${window.location.origin}?channel=${encodeURIComponent(channel.name)}&embed=true`;
-    navigator.clipboard.writeText(shareUrl)
-      .then(() => {
-        setCopiedApp(true);
-        setTimeout(() => {
-          setCopiedApp(false);
-        }, 2000);
-      })
-      .catch((err) => console.error("Could not copy share link", err));
+  const getCleanSlug = (name: string) => {
+    if (!name) return "";
+    return name.trim().replace(/\s+/g, "_").replace(/[^\w\-]/g, "");
   };
+
+  const getDirectM3u8Url = () => {
+    if (!channel) return "";
+    const origin = window.location.origin.includes("pages.dev") 
+      ? window.location.origin 
+      : "https://ireentvsportspremium.pages.dev";
+    return `${origin}/${getCleanSlug(channel.name)}.m3u8`;
+  };
+
+  const getEmbedShareUrl = () => {
+    if (!channel) return "";
+    const base = window.location.href.split("?")[0];
+    const params = new URLSearchParams();
+    params.set("channel", channel.name);
+    if (channel.url) params.set("stream", channel.url);
+    if (channel.logo) params.set("logo", channel.logo);
+    if (channel.group) params.set("group", channel.group);
+    params.set("embed", "true");
+    return `${base}?${params.toString()}`;
+  };
+
+  const getFullPlaylistUrl = () => {
+    const origin = window.location.origin.includes("pages.dev") 
+      ? window.location.origin 
+      : "https://ireentvsportspremium.pages.dev";
+    return `${origin}/playlist.m3u`;
+  };
+
+  const copyToClipboard = (text: string, type: string) => {
+    navigator.clipboard.writeText(text)
+      .then(() => {
+        setCopiedType(type);
+        setTimeout(() => {
+          setCopiedType(null);
+        }, 2500);
+      })
+      .catch((err) => console.error("Could not copy link", err));
+  };
+
 
   // Construct URL
   const getStreamUrl = () => {
@@ -589,31 +621,18 @@ export default function VideoPlayer({ channel, lang, t, isEmbed = false, onClose
               {/* Channel Share Button */}
               <button 
                 onClick={() => {
-                  handleCopyAppShareLink();
-                  resetControlsTimeout();
+                  setShowShareModal(true);
+                  if (controlsTimeoutRef.current) {
+                    clearTimeout(controlsTimeoutRef.current);
+                  }
                 }}
-                title={lang === "bn" ? "চ্যানেল লিংক কপি করুন" : "Copy Channel Share Link"}
-                className={`p-1.5 sm:p-2 rounded-lg text-white transition-all flex items-center gap-1.5 active:scale-95 ${
-                  copiedApp 
-                    ? "bg-green-600/20 text-green-500 border border-green-500/30" 
-                    : "hover:bg-white/10"
-                }`}
+                title={lang === "bn" ? "চ্যানেল লিংক ও M3U8 শেয়ার করুন" : "Share Channel & M3U8 Link"}
+                className="p-1.5 sm:p-2 rounded-lg text-white hover:bg-white/10 transition-all flex items-center gap-1.5 active:scale-95 cursor-pointer"
               >
-                {copiedApp ? (
-                  <>
-                    <Check className="w-4 h-4 sm:w-5 sm:h-5 text-green-400" />
-                    <span className="text-[10px] sm:text-xs font-sans font-bold text-green-400">
-                      {lang === "bn" ? "কপি হয়েছে" : "Copied"}
-                    </span>
-                  </>
-                ) : (
-                  <>
-                    <Share2 className="w-4 h-4 sm:w-5 sm:h-5 text-neutral-200" />
-                    <span className="text-[10px] sm:text-xs font-sans font-bold hidden md:inline text-neutral-200">
-                      {lang === "bn" ? "শেয়ার" : "Share"}
-                    </span>
-                  </>
-                )}
+                <Share2 className="w-4 h-4 sm:w-5 sm:h-5 text-neutral-200" />
+                <span className="text-[10px] sm:text-xs font-sans font-bold hidden md:inline text-neutral-200">
+                  {lang === "bn" ? "শেয়ার" : "Share"}
+                </span>
               </button>
 
               {/* Reload Stream Button */}
@@ -709,6 +728,187 @@ export default function VideoPlayer({ channel, lang, t, isEmbed = false, onClose
               <h2 className="text-xl font-black text-white font-sans tracking-tight">
                 {channel?.name}
               </h2>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Share Modal Dialog Overlay */}
+      {showShareModal && (
+        <div 
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md animate-fade-in"
+          onClick={() => setShowShareModal(false)}
+        >
+          <div 
+            className="w-full max-w-lg bg-neutral-900 border border-neutral-750 rounded-2xl p-5 sm:p-6 shadow-2xl flex flex-col gap-5 text-neutral-100 font-sans"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Modal Header */}
+            <div className="flex items-center justify-between border-b border-neutral-800 pb-3">
+              <div className="flex items-center gap-3">
+                <div className="w-9 h-9 rounded-xl bg-red-600/10 border border-red-500/20 flex items-center justify-center text-red-500">
+                  <Share2 className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-white leading-tight">
+                    {lang === "bn" ? "চ্যানেল ও স্ট্রিম লিংক শেয়ার" : "Share Channel & Stream"}
+                  </h3>
+                  <p className="text-xs text-neutral-400 font-mono">
+                    {channel.name}
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setShowShareModal(false)}
+                className="w-8 h-8 rounded-lg hover:bg-neutral-800 flex items-center justify-center text-neutral-400 hover:text-white transition-colors cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="flex flex-col gap-4 max-h-[70vh] overflow-y-auto pr-1">
+              {/* Option 1: Direct .m3u8 Stream Link */}
+              <div className="p-3.5 bg-[#050505] border border-neutral-800 rounded-xl flex flex-col gap-2">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <Tv className="w-4 h-4 text-red-500" />
+                    <span className="text-xs font-bold text-white uppercase tracking-wider">
+                      {lang === "bn" ? "সরাসরি M3U8 লিংক (VLC / IPTV)" : "Direct M3U8 Stream URL"}
+                    </span>
+                  </div>
+                  <span className="px-2 py-0.5 bg-red-500/10 text-red-400 border border-red-500/20 text-[10px] font-mono font-bold rounded">
+                    .m3u8
+                  </span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="text"
+                    readOnly
+                    value={getDirectM3u8Url()}
+                    className="flex-1 bg-neutral-900 border border-neutral-800 rounded-lg px-3 py-2 text-xs font-mono text-neutral-300 select-all outline-none"
+                  />
+                  <button
+                    onClick={() => copyToClipboard(getDirectM3u8Url(), "m3u8")}
+                    className={`px-3 py-2 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-all shrink-0 cursor-pointer ${
+                      copiedType === "m3u8"
+                        ? "bg-green-600 text-white"
+                        : "bg-red-600 hover:bg-red-500 text-white"
+                    }`}
+                  >
+                    {copiedType === "m3u8" ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+                    {copiedType === "m3u8" ? (lang === "bn" ? "কপি হয়েছে" : "Copied") : (lang === "bn" ? "কপি" : "Copy")}
+                  </button>
+                </div>
+                <p className="text-[11px] text-neutral-400">
+                  {lang === "bn"
+                    ? "এই লিংকটি সরাসরি VLC Player, OTT Navigator, TiviMate অথবা যেকোনো IPTV প্লেয়ারে চলবে।"
+                    : "Use this link in VLC Player, OTT Navigator, TiviMate, or any IPTV app."}
+                </p>
+              </div>
+
+              {/* Option 2: Web Embed Player Link */}
+              <div className="p-3.5 bg-[#050505] border border-neutral-800 rounded-xl flex flex-col gap-2">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <Link className="w-4 h-4 text-neutral-400" />
+                    <span className="text-xs font-bold text-white uppercase tracking-wider">
+                      {lang === "bn" ? "ওয়েব প্লেয়ার এম্বেড লিংক" : "Web Player Embed Link"}
+                    </span>
+                  </div>
+                  <span className="px-2 py-0.5 bg-neutral-800 text-neutral-300 text-[10px] font-mono rounded">
+                    WEB EMBED
+                  </span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="text"
+                    readOnly
+                    value={getEmbedShareUrl()}
+                    className="flex-1 bg-neutral-900 border border-neutral-800 rounded-lg px-3 py-2 text-xs font-mono text-neutral-300 select-all outline-none"
+                  />
+                  <button
+                    onClick={() => copyToClipboard(getEmbedShareUrl(), "embed")}
+                    className={`px-3 py-2 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-all shrink-0 cursor-pointer ${
+                      copiedType === "embed"
+                        ? "bg-green-600 text-white"
+                        : "bg-neutral-800 hover:bg-neutral-700 text-white border border-neutral-700"
+                    }`}
+                  >
+                    {copiedType === "embed" ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+                    {copiedType === "embed" ? (lang === "bn" ? "কপি হয়েছে" : "Copied") : (lang === "bn" ? "কপি" : "Copy")}
+                  </button>
+                </div>
+                <p className="text-[11px] text-neutral-400">
+                  {lang === "bn"
+                    ? "অন্য ব্রাউজারে ওপেন করলে সরাসরি শুধু এই চ্যানেলটির প্লেয়ার চালু হবে (কোনো লক স্ক্রিন ছাড়াই)।"
+                    : "Opens only this standalone channel player in any browser without full website or lock screen."}
+                </p>
+              </div>
+
+              {/* Option 3: HTML iFrame Code */}
+              <div className="p-3.5 bg-[#050505] border border-neutral-800 rounded-xl flex flex-col gap-2">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <Code className="w-4 h-4 text-neutral-400" />
+                    <span className="text-xs font-bold text-white uppercase tracking-wider">
+                      HTML iFrame Embed
+                    </span>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="text"
+                    readOnly
+                    value={`<iframe src="${getEmbedShareUrl()}" width="100%" height="100%" frameborder="0" allow="autoplay; fullscreen" allowfullscreen></iframe>`}
+                    className="flex-1 bg-neutral-900 border border-neutral-800 rounded-lg px-3 py-2 text-xs font-mono text-neutral-300 select-all outline-none"
+                  />
+                  <button
+                    onClick={() => copyToClipboard(`<iframe src="${getEmbedShareUrl()}" width="100%" height="100%" frameborder="0" allow="autoplay; fullscreen" allowfullscreen></iframe>`, "iframe")}
+                    className={`px-3 py-2 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-all shrink-0 cursor-pointer ${
+                      copiedType === "iframe"
+                        ? "bg-green-600 text-white"
+                        : "bg-neutral-800 hover:bg-neutral-700 text-white border border-neutral-700"
+                    }`}
+                  >
+                    {copiedType === "iframe" ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+                    {copiedType === "iframe" ? (lang === "bn" ? "কপি হয়েছে" : "Copied") : (lang === "bn" ? "কপি" : "Copy")}
+                  </button>
+                </div>
+              </div>
+
+              {/* Option 4: Full M3U Playlist */}
+              <div className="p-3.5 bg-[#050505] border border-neutral-800 rounded-xl flex flex-col gap-2">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <ListVideo className="w-4 h-4 text-yellow-500" />
+                    <span className="text-xs font-bold text-white uppercase tracking-wider">
+                      {lang === "bn" ? "সম্পূর্ণ M3U প্লেলিস্ট লিংক" : "Full M3U Playlist URL"}
+                    </span>
+                  </div>
+                  <span className="px-2 py-0.5 bg-yellow-500/10 text-yellow-400 border border-yellow-500/20 text-[10px] font-mono font-bold rounded">
+                    ALL CHANNELS
+                  </span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="text"
+                    readOnly
+                    value={getFullPlaylistUrl()}
+                    className="flex-1 bg-neutral-900 border border-neutral-800 rounded-lg px-3 py-2 text-xs font-mono text-neutral-300 select-all outline-none"
+                  />
+                  <button
+                    onClick={() => copyToClipboard(getFullPlaylistUrl(), "playlist")}
+                    className={`px-3 py-2 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-all shrink-0 cursor-pointer ${
+                      copiedType === "playlist"
+                        ? "bg-green-600 text-white"
+                        : "bg-neutral-800 hover:bg-neutral-700 text-white border border-neutral-700"
+                    }`}
+                  >
+                    {copiedType === "playlist" ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+                    {copiedType === "playlist" ? (lang === "bn" ? "কপি হয়েছে" : "Copied") : (lang === "bn" ? "কপি" : "Copy")}
+                  </button>
+                </div>
+              </div>
             </div>
           </div>
         </div>

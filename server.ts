@@ -140,7 +140,10 @@ app.get(["/playlist.m3u", "/playlist.m3u8"], async (req, res) => {
       const group = ch.group || "Sports";
       const channelStreamUrl = `${baseUrl}/${slug}.m3u8`;
 
-      let logo = customLogos[channelName] || customLogos[slug] || ch.logo || "";
+      let logo = customLogos[channelName] || customLogos[slug] || `/logos/${slug}.png`;
+      if (logo.startsWith("/")) {
+        logo = `${baseUrl}${logo}`;
+      }
 
       m3u += `#EXTINF:-1 tvg-id="${slug}" tvg-name="${channelName}" tvg-logo="${logo}" group-title="${group}",${channelName}\n`;
       m3u += `${channelStreamUrl}\n\n`;

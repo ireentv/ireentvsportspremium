@@ -82,7 +82,7 @@ async function run() {
     const group = ch.group || "Sports";
     const channelStreamUrl = `${BASE_URL.replace(/\/$/, "")}/${slug}.m3u8`;
 
-    // 1. Check if user placed a local logo in public/logos/{slug}.png or .jpg
+    // 1. Check if user placed a local logo in public/logos/{slug}.png or .jpg or .svg
     let resolvedLogo = "";
     const localPng = path.join(logosDir, `${slug}.png`);
     const localJpg = path.join(logosDir, `${slug}.jpg`);
@@ -90,18 +90,20 @@ async function run() {
 
     if (fs.existsSync(localPng)) {
       resolvedLogo = `${BASE_URL.replace(/\/$/, "")}/logos/${slug}.png`;
-    } else if (fs.existsSync(localJpg)) {
-      resolvedLogo = `${BASE_URL.replace(/\/$/, "")}/logos/${slug}.jpg`;
     } else if (fs.existsSync(localSvg)) {
       resolvedLogo = `${BASE_URL.replace(/\/$/, "")}/logos/${slug}.svg`;
+    } else if (fs.existsSync(localJpg)) {
+      resolvedLogo = `${BASE_URL.replace(/\/$/, "")}/logos/${slug}.jpg`;
     } else if (customLogos[channelName]) {
-      // 2. Check custom_logos.json
       resolvedLogo = customLogos[channelName];
     } else if (customLogos[slug]) {
       resolvedLogo = customLogos[slug];
     } else {
-      // 3. Fallback to channel's upstream logo
-      resolvedLogo = ch.logo || "";
+      resolvedLogo = `${BASE_URL.replace(/\/$/, "")}/logos/${slug}.png`;
+    }
+
+    if (resolvedLogo.startsWith("/")) {
+      resolvedLogo = `${BASE_URL.replace(/\/$/, "")}${resolvedLogo}`;
     }
 
     m3u += `#EXTINF:-1 tvg-id="${slug}" tvg-name="${channelName}" tvg-logo="${resolvedLogo}" group-title="${group}",${channelName}\n`;

@@ -14,7 +14,21 @@ interface ChannelCardProps {
 
 export default function ChannelCard({ channel, isActive, isFavorite, onSelect, onToggleFavorite }: ChannelCardProps) {
   const [imgError, setImgError] = React.useState<boolean>(false);
-  const logoUrl = getChannelLogo(channel.name, channel.logo);
+  const initialLogo = getChannelLogo(channel.name, channel.logo);
+  const [logoSrc, setLogoSrc] = React.useState<string>(initialLogo);
+
+  React.useEffect(() => {
+    setLogoSrc(getChannelLogo(channel.name, channel.logo));
+    setImgError(false);
+  }, [channel.name, channel.logo]);
+
+  const handleImageError = () => {
+    if (logoSrc.endsWith(".png")) {
+      setLogoSrc(logoSrc.replace(/\.png$/, ".svg"));
+    } else {
+      setImgError(true);
+    }
+  };
 
   return (
     <motion.div
@@ -40,12 +54,12 @@ export default function ChannelCard({ channel, isActive, isFavorite, onSelect, o
       {/* Top row: Logo and Star Favorite toggle */}
       <div className="flex items-start justify-between gap-2 z-10">
         <div className="w-14 h-14 bg-neutral-950 border border-neutral-800 rounded-lg p-1.5 flex items-center justify-center overflow-hidden bg-white/5 relative shadow-inner">
-          {logoUrl && !imgError ? (
+          {logoSrc && !imgError ? (
             <img 
-              src={logoUrl} 
+              src={logoSrc} 
               alt={channel.name}
               referrerPolicy="no-referrer"
-              onError={() => setImgError(true)}
+              onError={handleImageError}
               className="w-full h-full object-contain filter group-hover:scale-110 transition-transform duration-300"
             />
           ) : (

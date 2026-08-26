@@ -93,12 +93,10 @@ export const onRequest = async (context: any): Promise<Response> => {
       const group = ch.group || "Sports";
       const channelStreamUrl = `${baseUrl}/${slug}.m3u8`;
 
-      // Priority: 1. local hosted logo path 2. known clean high-res logo 3. channel's upstream logo
+      // Priority: 1. known clean high-res logo 2. local hosted logo path in public/logos/
       let resolvedLogo = `${baseUrl}/logos/${slug}.png`;
       if (fallbackLogos[simpleSlug]) {
         resolvedLogo = fallbackLogos[simpleSlug];
-      } else if (ch.logo) {
-        resolvedLogo = ch.logo;
       }
 
       m3u += `#EXTINF:-1 tvg-id="${slug}" tvg-name="${channelName}" tvg-logo="${resolvedLogo}" group-title="${group}",${channelName}\n`;

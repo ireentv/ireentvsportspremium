@@ -78,8 +78,9 @@ async function run() {
 
   for (const ch of channels) {
     const slug = cleanSlug(ch.name);
-    const channelName = ch.name.trim();
-    const group = ch.group || "Sports";
+    const channelName = (ch.name || "").trim();
+    const group = ch.group || ch.category || "Sports";
+    const tvgId = ch.tvg_id || ch.tvgId || slug;
     const channelStreamUrl = `${BASE_URL.replace(/\/$/, "")}/${slug}.m3u8`;
 
     // 1. Check if user placed a local logo in public/logos/{slug}.png or .jpg or .svg
@@ -98,6 +99,8 @@ async function run() {
       resolvedLogo = customLogos[channelName];
     } else if (customLogos[slug]) {
       resolvedLogo = customLogos[slug];
+    } else if (ch.logo) {
+      resolvedLogo = ch.logo;
     } else {
       resolvedLogo = `${BASE_URL.replace(/\/$/, "")}/logos/${slug}.png`;
     }
@@ -106,7 +109,7 @@ async function run() {
       resolvedLogo = `${BASE_URL.replace(/\/$/, "")}${resolvedLogo}`;
     }
 
-    m3u += `#EXTINF:-1 tvg-id="${slug}" tvg-name="${channelName}" tvg-logo="${resolvedLogo}" group-title="${group}",${channelName}\n`;
+    m3u += `#EXTINF:-1 tvg-id="${tvgId}" tvg-name="${channelName}" tvg-logo="${resolvedLogo}" group-title="${group}",${channelName}\n`;
     m3u += `${channelStreamUrl}\n\n`;
   }
 

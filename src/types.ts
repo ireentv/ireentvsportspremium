@@ -13,13 +13,30 @@ export interface ChannelAttrs {
 }
 
 export interface Channel {
+  id?: number | string;
   name: string;
   logo: string;
   url: string;
   group: string;
+  stream_url?: string;
+  raw_stream_url?: string;
   url_raw?: string;
+  tvg_id?: string;
+  referer?: string;
+  user_agent?: string;
   headers?: ChannelHeaders;
   attrs?: ChannelAttrs;
+}
+
+export interface PlaylistInfo {
+  playlist_name?: string;
+  owner?: string;
+  telegram?: string;
+  website?: string;
+  developer?: string;
+  version?: string;
+  channels_amount?: number;
+  last_update?: string;
 }
 
 export interface PlaylistData {
@@ -30,8 +47,11 @@ export interface PlaylistData {
   developer?: string;
   version?: string;
   name?: string;
+  playlist_name?: string;
   channels_amount?: number;
   Last_update?: string;
+  last_update?: string;
+  info?: PlaylistInfo;
   channels: Channel[];
 }
 

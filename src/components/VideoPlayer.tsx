@@ -150,7 +150,17 @@ export default function VideoPlayer({ channel, lang, t, isEmbed = false, onClose
 
   // Construct URL
   const getStreamUrl = () => {
-    return channel ? channel.url : "";
+    if (!channel) return "";
+    if (channel.raw_stream_url && channel.raw_stream_url.trim()) {
+      return channel.raw_stream_url.trim();
+    }
+    if (channel.stream_url && channel.stream_url.trim()) {
+      return channel.stream_url.split("|")[0].trim();
+    }
+    if (channel.url && channel.url.trim()) {
+      return channel.url.split("|")[0].trim();
+    }
+    return "";
   };
 
   const streamUrl = getStreamUrl();

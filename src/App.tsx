@@ -6,6 +6,7 @@ import {
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { Channel, PlaylistData, Language } from "./types";
+import { normalizeChannel, normalizePlaylistData } from "./channelUtils";
 import { translations } from "./translations";
 import VideoPlayer from "./components/VideoPlayer";
 import ChannelCard from "./components/ChannelCard";
@@ -45,11 +46,11 @@ export default function App() {
       if (typeof window !== "undefined") {
         const params = new URLSearchParams(window.location.search);
         const name = params.get("channel");
-        const url = params.get("stream") || params.get("url");
+        const url = params.get("stream") || params.get("url") || params.get("stream_url") || params.get("raw_stream_url");
         const logo = params.get("logo") || "";
         const group = params.get("group") || "Sports";
         if (name && url) {
-          return { name, url, logo, group };
+          return normalizeChannel({ name, url, logo, group });
         }
       }
     } catch (e) {
@@ -113,8 +114,9 @@ export default function App() {
       const cachedRaw = localStorage.getItem("ireentv_cached_playlist");
       if (cachedRaw) {
         const parsed = JSON.parse(cachedRaw);
-        if (parsed && parsed.channels && parsed.channels.length > 0) {
-          setPlaylist(parsed);
+        const normalized = normalizePlaylistData(parsed);
+        if (normalized && normalized.channels && normalized.channels.length > 0) {
+          setPlaylist(normalized);
         }
       }
     } catch (e) {
@@ -136,8 +138,9 @@ export default function App() {
           const contentType = res.headers.get("content-type") || "";
           if (!contentType.includes("text/html") && !contentType.includes("application/xml") && !contentType.includes("text/xml")) {
             const json = await res.json();
-            if (json && json.channels && json.channels.length > 0) {
-              data = json;
+            const normalized = normalizePlaylistData(json);
+            if (normalized && normalized.channels && normalized.channels.length > 0) {
+              data = normalized;
             }
           }
         }
@@ -156,8 +159,9 @@ export default function App() {
           });
           if (res.ok) {
             const json = await res.json();
-            if (json && json.channels && json.channels.length > 0) {
-              data = json;
+            const normalized = normalizePlaylistData(json);
+            if (normalized && normalized.channels && normalized.channels.length > 0) {
+              data = normalized;
             }
           }
         } catch (err: any) {
@@ -172,8 +176,9 @@ export default function App() {
           const res = await fetch(fallbackUrl);
           if (res.ok) {
             const json = await res.json();
-            if (json && json.channels && json.channels.length > 0) {
-              data = json;
+            const normalized = normalizePlaylistData(json);
+            if (normalized && normalized.channels && normalized.channels.length > 0) {
+              data = normalized;
             }
           }
         } catch (err: any) {

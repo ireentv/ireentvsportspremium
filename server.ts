@@ -29,6 +29,84 @@ let cachedPlaylist: any = null;
 let lastCacheTime = 0;
 const CACHE_TTL_MS = 10 * 60 * 1000; // 10 minutes cache
 
+function normalizeChannel(raw: any, index: number = 0): any {
+  if (!raw) return { name: `Channel ${index + 1}`, url: "", group: "Sports" };
+
+  let cleanUrl = "";
+  if (typeof raw.raw_stream_url === "string" && raw.raw_stream_url.trim()) {
+    cleanUrl = raw.raw_stream_url.trim();
+  } else if (typeof raw.stream_url === "string" && raw.stream_url.trim()) {
+    cleanUrl = raw.stream_url.split("|")[0].trim();
+  } else if (typeof raw.url === "string" && raw.url.trim()) {
+    cleanUrl = raw.url.split("|")[0].trim();
+  } else if (typeof raw.url_raw === "string" && raw.url_raw.trim()) {
+    cleanUrl = raw.url_raw.split("|")[0].trim();
+  } else if (typeof raw.stream === "string" && raw.stream.trim()) {
+    cleanUrl = raw.stream.split("|")[0].trim();
+  } else if (typeof raw.link === "string" && raw.link.trim()) {
+    cleanUrl = raw.link.split("|")[0].trim();
+  }
+
+  const name = (raw.name || raw.title || raw.channel || `Channel ${index + 1}`).toString().trim();
+  const logo = (raw.logo || raw.image || raw.icon || "").toString().trim();
+  const group = (raw.group || raw.category || raw.group_title || "Sports").toString().trim();
+  const tvgId = (raw.tvg_id || raw.tvgId || (raw.attrs ? raw.attrs["tvg-id"] : "") || "").toString().trim();
+  const referer = raw.referer || (raw.headers ? raw.headers.Referer : undefined);
+  const userAgent = raw.user_agent || (raw.headers ? raw.headers["User-Agent"] : undefined);
+
+  return {
+    id: raw.id ?? (index + 1),
+    name,
+    logo,
+    url: cleanUrl,
+    group,
+    stream_url: raw.stream_url || cleanUrl,
+    raw_stream_url: raw.raw_stream_url || cleanUrl,
+    url_raw: raw.url_raw || cleanUrl,
+    tvg_id: tvgId,
+    referer,
+    user_agent: userAgent,
+    headers: {
+      Referer: referer,
+      "User-Agent": userAgent,
+      ...(raw.headers || {})
+    },
+    attrs: {
+      "tvg-id": tvgId,
+      ...(raw.attrs || {})
+    }
+  };
+}
+
+function normalizePlaylistData(raw: any): any {
+  if (!raw) return { channels: [] };
+  let rawChannels: any[] = [];
+  if (Array.isArray(raw.channels)) {
+    rawChannels = raw.channels;
+  } else if (Array.isArray(raw)) {
+    rawChannels = raw;
+  }
+
+  const channels = rawChannels.map((c, i) => normalizeChannel(c, i));
+  const info = raw.info || {};
+
+  return {
+    status: raw.status || "success",
+    name: raw.name || info.playlist_name || raw.playlist_name || "Live Sports",
+    playlist_name: raw.playlist_name || info.playlist_name || raw.name || "Live Sports",
+    owner: raw.owner || info.owner || "IreenTv",
+    telegram: raw.telegram || info.telegram || "https://t.me/ireentv",
+    website: raw.website || info.website || "https://anamul.pages.dev",
+    developer: raw.developer || info.developer || "MD ANAMUL HOQUE",
+    version: raw.version || info.version || "1.0",
+    channels_amount: raw.channels_amount || info.channels_amount || channels.length,
+    Last_update: raw.Last_update || raw.last_update || info.last_update || "Just Now",
+    last_update: raw.last_update || raw.Last_update || info.last_update || "Just Now",
+    info,
+    channels
+  };
+}
+
 async function fetchPlaylistFromRemote(): Promise<any> {
   const sources = [
     {
@@ -60,8 +138,8 @@ async function fetchPlaylistFromRemote(): Promise<any> {
         const text = await response.text();
         if (text && text.trim().startsWith("{")) {
           const data = JSON.parse(text);
-          if (data && Array.isArray(data.channels) && data.channels.length > 0) {
-            return data;
+          if (data && (Array.isArray(data.channels) || Array.isArray(data))) {
+            return normalizePlaylistData(data);
           }
         }
       } else {
@@ -122,15 +200,15 @@ app.get(["/playlist.m3u", "/playlist.m3u8"], async (req, res) => {
       }
     } catch (e) {}
 
-    const lastUpdate = new Date().toUTCString();
+    const lastUpdate = data?.last_update || data?.Last_update || new Date().toUTCString();
     const channelsCount = channels.length;
 
     let m3u = `#EXTM3U x-tvg-url="https://raw.githubusercontent.com/ireentv/IreenTv-Auto-Update-Json-M3u-Playlist/main/epg.xml"\n`;
-    m3u += `# Playlist Name: Ireen TV Sports Premium\n`;
-    m3u += `# Telegram: https://t.me/ireentv\n`;
-    m3u += `# Website: https://anamul.pages.dev\n`;
-    m3u += `# Developer: MD ANAMUL HOQUE\n`;
-    m3u += `# Version: 1.0\n`;
+    m3u += `# Playlist Name: ${data?.playlist_name || data?.name || "Ireen TV Sports Premium"}\n`;
+    m3u += `# Telegram: ${data?.telegram || "https://t.me/ireentv"}\n`;
+    m3u += `# Website: ${data?.website || "https://anamul.pages.dev"}\n`;
+    m3u += `# Developer: ${data?.developer || "MD ANAMUL HOQUE"}\n`;
+    m3u += `# Version: ${data?.version || "1.0"}\n`;
     m3u += `# Channels Amount: ${channelsCount}\n`;
     m3u += `# Last Update: ${lastUpdate}\n\n`;
 
@@ -140,12 +218,12 @@ app.get(["/playlist.m3u", "/playlist.m3u8"], async (req, res) => {
       const group = ch.group || "Sports";
       const channelStreamUrl = `${baseUrl}/${slug}.m3u8`;
 
-      let logo = customLogos[channelName] || customLogos[slug] || `/logos/${slug}.png`;
+      let logo = customLogos[channelName] || customLogos[slug] || ch.logo || `/logos/${slug}.png`;
       if (logo.startsWith("/")) {
         logo = `${baseUrl}${logo}`;
       }
 
-      m3u += `#EXTINF:-1 tvg-id="${slug}" tvg-name="${channelName}" tvg-logo="${logo}" group-title="${group}",${channelName}\n`;
+      m3u += `#EXTINF:-1 tvg-id="${ch.tvg_id || slug}" tvg-name="${channelName}" tvg-logo="${logo}" group-title="${group}",${channelName}\n`;
       m3u += `${channelStreamUrl}\n\n`;
     }
 
@@ -170,21 +248,23 @@ app.get(["/:channelName.m3u8", "/channel/:channelName.m3u8"], async (req, res) =
     const channels = data?.channels || [];
     const matched = findMatchingChannelInList(channels, channelParam);
 
-    if (!matched || !matched.url) {
+    const streamUrl = matched ? (matched.url || matched.raw_stream_url || (matched.stream_url ? matched.stream_url.split("|")[0] : "")) : null;
+
+    if (!matched || !streamUrl) {
       res.status(404).send(`Channel "${channelParam}" not found in playlist.`);
       return;
     }
 
     const mode = req.query.mode;
     if (mode === "proxy") {
-      res.redirect(`/api/stream?url=${encodeURIComponent(matched.url)}`);
+      res.redirect(`/api/stream?url=${encodeURIComponent(streamUrl)}`);
       return;
     }
 
     // Direct 302 Found redirect to the live stream
     res.setHeader("Access-Control-Allow-Origin", "*");
     res.setHeader("Cache-Control", "public, max-age=60");
-    res.redirect(302, matched.url);
+    res.redirect(302, streamUrl);
   } catch (error: any) {
     res.status(500).send(`Error resolving stream: ${error.message}`);
   }

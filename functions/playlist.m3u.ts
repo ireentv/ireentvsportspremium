@@ -2,10 +2,17 @@
 // Endpoint: https://ireentvsportspremium.pages.dev/playlist.m3u (or .m3u8)
 
 interface ChannelItem {
+  id?: number | string;
   name: string;
-  url: string;
+  url?: string;
+  stream_url?: string;
+  raw_stream_url?: string;
+  url_raw?: string;
+  tvg_id?: string;
   logo?: string;
   group?: string;
+  referer?: string;
+  user_agent?: string;
 }
 
 function cleanSlug(name: string): string {
@@ -13,27 +20,50 @@ function cleanSlug(name: string): string {
   return name.trim().replace(/\s+/g, "_").replace(/[^\w\-]/g, "");
 }
 
+function getChannelStreamUrl(c: ChannelItem): string {
+  if (c.raw_stream_url && typeof c.raw_stream_url === "string" && c.raw_stream_url.trim()) {
+    return c.raw_stream_url.trim();
+  }
+  if (c.stream_url && typeof c.stream_url === "string" && c.stream_url.trim()) {
+    return c.stream_url.split("|")[0].trim();
+  }
+  if (c.url && typeof c.url === "string" && c.url.trim()) {
+    return c.url.split("|")[0].trim();
+  }
+  if (c.url_raw && typeof c.url_raw === "string" && c.url_raw.trim()) {
+    return c.url_raw.split("|")[0].trim();
+  }
+  return "";
+}
+
 export const onRequest = async (context: any): Promise<Response> => {
   const { request } = context;
   const url = new URL(request.url);
   const baseUrl = `${url.protocol}//${url.host}`;
+  const isDirectMode = url.searchParams.get("direct") === "true";
 
   try {
     const githubSources = [
-      "https://raw.githubusercontent.com/ireentv/IreenTv-Auto-Update-Json-M3u-Playlist/main/Live_Sports.json",
-      "https://raw.githubusercontent.com/ireentv/IreenTv-Auto-Update-Json-M3u-Playlist/refs/heads/main/Live_Sports.json"
+      "https://raw.githubusercontent.com/ireentv/IreenTv-Auto-Update-Json-M3u-Playlist/refs/heads/main/Live_Sports.json",
+      "https://raw.githubusercontent.com/ireentv/IreenTv-Auto-Update-Json-M3u-Playlist/main/Live_Sports.json"
     ];
 
+    let playlistData: any = null;
     let channels: ChannelItem[] = [];
     for (const source of githubSources) {
       try {
         const res = await fetch(source, {
-          cf: { cacheTtl: 600, cacheEverything: true }
+          cf: { cacheTtl: 300, cacheEverything: true }
         } as any);
         if (res.ok) {
           const data: any = await res.json();
           if (data && Array.isArray(data.channels) && data.channels.length > 0) {
+            playlistData = data;
             channels = data.channels;
+            break;
+          } else if (Array.isArray(data) && data.length > 0) {
+            playlistData = { channels: data };
+            channels = data;
             break;
           }
         }
@@ -49,57 +79,46 @@ export const onRequest = async (context: any): Promise<Response> => {
       });
     }
 
-    const lastUpdate = new Date().toUTCString();
+    const info = playlistData?.info || {};
+    const playlistName = info.playlist_name || playlistData?.name || "Ireen TV - Live Sports";
+    const owner = info.owner || playlistData?.owner || "Ireen TV";
+    const telegram = info.telegram || playlistData?.telegram || "https://t.me/ireentv";
+    const website = info.website || playlistData?.website || "https://anamul.pages.dev";
+    const developer = info.developer || playlistData?.developer || "MD ANAMUL HOQUE";
+    const version = info.version || playlistData?.version || "1.0";
+    const lastUpdate = info.last_update || playlistData?.last_update || playlistData?.Last_update || new Date().toUTCString();
     const channelsCount = channels.length;
 
     let m3u = `#EXTM3U x-tvg-url="https://raw.githubusercontent.com/ireentv/IreenTv-Auto-Update-Json-M3u-Playlist/main/epg.xml"\n`;
-    m3u += `# Playlist Name: Ireen TV Sports Premium\n`;
-    m3u += `# Telegram: https://t.me/ireentv\n`;
-    m3u += `# Website: https://anamul.pages.dev\n`;
-    m3u += `# Developer: MD ANAMUL HOQUE\n`;
-    m3u += `# Version: 1.0\n`;
+    m3u += `# Playlist Name: ${playlistName}\n`;
+    m3u += `# Owner: ${owner}\n`;
+    m3u += `# Telegram: ${telegram}\n`;
+    m3u += `# Website: ${website}\n`;
+    m3u += `# Developer: ${developer}\n`;
+    m3u += `# Version: ${version}\n`;
     m3u += `# Channels Amount: ${channelsCount}\n`;
     m3u += `# Last Update: ${lastUpdate}\n\n`;
 
-    // Common sports logos fallback dictionary
-    const fallbackLogos: Record<string, string> = {
-      "laligatv": "https://raw.githubusercontent.com/tv-logo/tv-logos/main/countries/spain/laliga-tv-es.png",
-      "tsports": "https://upload.wikimedia.org/wikipedia/en/thumb/e/e9/T_Sports_logo.svg/330px-T_Sports_logo.svg.png",
-      "sonyten1": "https://raw.githubusercontent.com/tv-logo/tv-logos/main/countries/india/sony-ten-1-in.png",
-      "sonyten2": "https://raw.githubusercontent.com/tv-logo/tv-logos/main/countries/india/sony-ten-2-in.png",
-      "sonyten3": "https://raw.githubusercontent.com/tv-logo/tv-logos/main/countries/india/sony-ten-3-in.png",
-      "sonyten5": "https://raw.githubusercontent.com/tv-logo/tv-logos/main/countries/india/sony-ten-5-in.png",
-      "starsports1": "https://raw.githubusercontent.com/tv-logo/tv-logos/main/countries/india/star-sports-1-in.png",
-      "starsports2": "https://raw.githubusercontent.com/tv-logo/tv-logos/main/countries/india/star-sports-2-in.png",
-      "skysportsmainevent": "https://raw.githubusercontent.com/tv-logo/tv-logos/main/countries/united-kingdom/sky-sports-main-event-uk.png",
-      "skysportspremierleague": "https://raw.githubusercontent.com/tv-logo/tv-logos/main/countries/united-kingdom/sky-sports-premier-league-uk.png",
-      "skysportsfootball": "https://raw.githubusercontent.com/tv-logo/tv-logos/main/countries/united-kingdom/sky-sports-football-uk.png",
-      "skysportscricket": "https://raw.githubusercontent.com/tv-logo/tv-logos/main/countries/united-kingdom/sky-sports-cricket-uk.png",
-      "skysportsf1": "https://raw.githubusercontent.com/tv-logo/tv-logos/main/countries/united-kingdom/sky-sports-f1-uk.png",
-      "tntsports1": "https://raw.githubusercontent.com/tv-logo/tv-logos/main/countries/united-kingdom/tnt-sports-1-uk.png",
-      "tntsports2": "https://raw.githubusercontent.com/tv-logo/tv-logos/main/countries/united-kingdom/tnt-sports-2-uk.png",
-      "beinsports1": "https://raw.githubusercontent.com/tv-logo/tv-logos/main/countries/qatar/bein-sports-1-qa.png",
-      "beinsports2": "https://raw.githubusercontent.com/tv-logo/tv-logos/main/countries/qatar/bein-sports-2-qa.png",
-      "asports": "https://upload.wikimedia.org/wikipedia/en/3/30/A_Sports_Logo.png",
-      "tensports": "https://raw.githubusercontent.com/tv-logo/tv-logos/main/countries/pakistan/ten-sports-pk.png",
-      "ptvsports": "https://raw.githubusercontent.com/tv-logo/tv-logos/main/countries/pakistan/ptv-sports-pk.png",
-      "willowhd": "https://raw.githubusercontent.com/tv-logo/tv-logos/main/countries/united-states/willow-us.png"
-    };
-
     for (const ch of channels) {
       const slug = cleanSlug(ch.name);
-      const simpleSlug = slug.toLowerCase().replace(/[^a-z0-9]/g, "");
-      const channelName = ch.name.trim();
+      const channelName = (ch.name || "").trim();
       const group = ch.group || "Sports";
-      const channelStreamUrl = `${baseUrl}/${slug}.m3u8`;
+      const tvgId = ch.tvg_id || slug;
+      const directStreamUrl = getChannelStreamUrl(ch);
+      const channelStreamUrl = isDirectMode && directStreamUrl ? directStreamUrl : `${baseUrl}/${slug}.m3u8`;
 
-      // Priority: 1. known clean high-res logo 2. local hosted logo path in public/logos/
-      let resolvedLogo = `${baseUrl}/logos/${slug}.png`;
-      if (fallbackLogos[simpleSlug]) {
-        resolvedLogo = fallbackLogos[simpleSlug];
+      let resolvedLogo = ch.logo || `${baseUrl}/logos/${slug}.png`;
+      if (resolvedLogo.startsWith("/")) {
+        resolvedLogo = `${baseUrl}${resolvedLogo}`;
       }
 
-      m3u += `#EXTINF:-1 tvg-id="${slug}" tvg-name="${channelName}" tvg-logo="${resolvedLogo}" group-title="${group}",${channelName}\n`;
+      m3u += `#EXTINF:-1 tvg-id="${tvgId}" tvg-name="${channelName}" tvg-logo="${resolvedLogo}" group-title="${group}",${channelName}\n`;
+      if (ch.referer) {
+        m3u += `#EXTVLCOPT:http-referrer=${ch.referer}\n`;
+      }
+      if (ch.user_agent) {
+        m3u += `#EXTVLCOPT:http-user-agent=${ch.user_agent}\n`;
+      }
       m3u += `${channelStreamUrl}\n\n`;
     }
 
@@ -107,7 +126,7 @@ export const onRequest = async (context: any): Promise<Response> => {
       status: 200,
       headers: {
         "Content-Type": "application/vnd.apple.mpegurl; charset=utf-8",
-        "Content-Disposition": 'inline; filename="ireentv_playlist.m3u"',
+        "Content-Disposition": 'inline; filename="playlist.m3u"',
         "Access-Control-Allow-Origin": "*",
         "Cache-Control": "public, max-age=300"
       }
@@ -123,3 +142,4 @@ export const onRequest = async (context: any): Promise<Response> => {
     });
   }
 };
+

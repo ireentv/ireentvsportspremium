@@ -1,13 +1,11 @@
 // Cloudflare Pages Function: API Playlist
 export const onRequest = async (context: any): Promise<Response> => {
   const { request } = context;
-  const url = new URL(request.url);
-  const format = url.searchParams.get("format");
 
   try {
     const githubSources = [
-      "https://raw.githubusercontent.com/ireentv/IreenTv-Auto-Update-Json-M3u-Playlist/main/Live_Sports.json",
-      "https://raw.githubusercontent.com/ireentv/IreenTv-Auto-Update-Json-M3u-Playlist/refs/heads/main/Live_Sports.json"
+      "https://raw.githubusercontent.com/ireentv/IreenTv-Auto-Update-Json-M3u-Playlist/refs/heads/main/Live_Sports.json",
+      "https://raw.githubusercontent.com/ireentv/IreenTv-Auto-Update-Json-M3u-Playlist/main/Live_Sports.json"
     ];
 
     let data: any = null;
@@ -18,7 +16,7 @@ export const onRequest = async (context: any): Promise<Response> => {
         } as any);
         if (res.ok) {
           data = await res.json();
-          if (data && Array.isArray(data.channels) && data.channels.length > 0) {
+          if (data && ((Array.isArray(data.channels) && data.channels.length > 0) || (Array.isArray(data) && data.length > 0))) {
             break;
           }
         }
@@ -47,3 +45,4 @@ export const onRequest = async (context: any): Promise<Response> => {
     });
   }
 };
+
